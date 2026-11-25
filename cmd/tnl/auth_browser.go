@@ -14,7 +14,7 @@ import (
 
 type authBrowserCommand struct {
 	remoteFlags `embed:""`
-	URL         string `arg:"" name:"url" required:"" help:"HTTP service ID or public hostname to open with your current control session."`
+	URL         string `arg:"" name:"url" required:"" help:"Public HTTP service name, service ID, hostname, host:port, or HTTPS URL to open."`
 }
 
 func runAuthBrowser(ctx context.Context, flags authBrowserCommand, output, diagnostics io.Writer) error {

@@ -226,7 +226,7 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 			if err := os.WriteFile(configuration, updated, 0600); err != nil {
 				t.Fatal(err)
 			}
-			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--deployment", "live", "--scope", "server", "--state-dir", person})
+			statusOutput := cliCall(t, t.Context(), []string{"--config", configuration, "status", "--deployment", "live", "--server-only", "--state-dir", person})
 			if !strings.Contains(string(statusOutput), "live") {
 				t.Fatal("status retained the old selector")
 			}

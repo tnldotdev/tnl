@@ -14,7 +14,7 @@ func TestURLDeleteFlagDefaultsToProtectedDeletion(t *testing.T) {
 	for _, unconditional := range []bool{false, true} {
 		var flags cli
 		parser := commandForTest(&flags, io.Discard)
-		args := []string{"url", "delete", "svc_selected"}
+		args := []string{"url", "delete", "svc_0123456789abcdefghijkl"}
 		if unconditional {
 			args = append(args, "--unconditional")
 		}

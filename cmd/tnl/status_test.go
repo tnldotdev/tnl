@@ -40,14 +40,14 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 		defer tunnel.Finish(context.Background(), nil)
 	}
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: "json", Scope: "local", StateDir: root, Project: projectRoot, Configuration: project}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: "json", LastKnown: true, StateDir: root, Project: projectRoot, Configuration: project}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var result statusResult
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Projects) != 1 || result.Projects[0].Local == nil || result.Projects[0].Server != nil {
+	if result.Scope != "local" || len(result.Projects) != 1 || result.Projects[0].Local == nil || result.Projects[0].Server != nil {
 		t.Fatalf("status=%s", output.String())
 	}
 	snapshot := result.Projects[0].Local.Snapshot
@@ -55,7 +55,7 @@ func TestStatusSnapshotIncludesDirectAndNamedPublicationCursor(t *testing.T) {
 		t.Fatalf("status=%s", output.String())
 	}
 	output.Reset()
-	if err := runStatus(t.Context(), statusCommand{Service: "web", Output: "json", Scope: "local", StateDir: root, Project: projectRoot, Configuration: project}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Service: "web", Output: "json", LastKnown: true, StateDir: root, Project: projectRoot, Configuration: project}, &output); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
@@ -78,7 +78,9 @@ func TestStatusServiceSelectsAppliedBindingsByNameAndInventoryByID(t *testing.T)
 		Applied:  &controlv1.AppliedProjectConfiguration{Services: []controlv1.AppliedProjectService{{Service: "web", ServiceId: &id}, {Service: "other"}}},
 		Services: []statusServerService{{ServiceID: id, Name: "web-myworktree"}, {ServiceID: "svc_other", Name: "other"}},
 	}}
-	project.Server.selectService("web", clientstate.TunnelSnapshot{})
+	if matched, err := project.Server.selectService("web", clientstate.TunnelSnapshot{}, true); err != nil || !matched {
+		t.Fatalf("could not select web: %v", err)
+	}
 	if s := project.Server; s.Applied != nil || len(s.AppliedServices) != 1 || s.AppliedServices[0].Service != "web" ||
 		len(s.Services) != 1 || s.Services[0].ServiceID != id {
 		t.Fatalf("filtered status = %+v", s)
@@ -99,7 +101,7 @@ func TestStatusAllKeepsIndependentProjectCursors(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: "json", Scope: "local", StateDir: root, All: true}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: "json", LastKnown: true, StateDir: root, All: true}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var all statusResult
@@ -110,7 +112,7 @@ func TestStatusAllKeepsIndependentProjectCursors(t *testing.T) {
 		t.Fatalf("project cursors=%s", output.String())
 	}
 	output.Reset()
-	if err := runStatus(t.Context(), statusCommand{Scope: "local", StateDir: root, All: true}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{LastKnown: true, StateDir: root, All: true}, &output); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range all.Projects {
@@ -137,7 +139,7 @@ func TestStatusKeepsLocalFactsWhenControlIsUnavailable(t *testing.T) {
 	}
 	defer tunnel.Finish(context.Background(), nil)
 	var output bytes.Buffer
-	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, Scope: "both", StateDir: root, Project: project, Configuration: projectConfiguration{Project: clientproject.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
+	if err := runStatus(t.Context(), statusCommand{Output: statusOutputJSON, StateDir: root, Project: project, Configuration: projectConfiguration{Project: clientproject.Project{Root: project}}, ServerURL: "https://127.0.0.1:1"}, &output); err != nil {
 		t.Fatal(err)
 	}
 	var result statusResult
@@ -258,7 +260,7 @@ func TestStatusServiceHumanOutputUsesHintsAndIndependentEndpointFacts(t *testing
 		{Id: "svc_no_endpoint", Name: "private", Protocol: controlv1.Tcp},
 	}, map[string]bool{"svc_ready": true, "svc_saved": true, "svc_no_endpoint": true})
 	var output bytes.Buffer
-	if err := writeStatus(&output, statusCommand{Scope: "server"}, []projectStatus{{Server: &statusServer{Available: true, ControlURL: "https://control.example", Services: services}}}); err != nil {
+	if err := writeStatus(&output, statusCommand{ServerOnly: true}, []projectStatus{{Server: &statusServer{Available: true, ControlURL: "https://control.example", Services: services}}}); err != nil {
 		t.Fatal(err)
 	}
 	want := "Server: https://control.example\n" +
@@ -319,15 +321,16 @@ func TestStatusHumanRecordedReadinessListAndDetail(t *testing.T) {
 	render("SERVICE   READY    URL\naccounts  Unknown  " + statusAccountsURL + "\n")
 	project.Server = nil
 	flags.Service = "accounts"
+	render("Service     accounts\nURL         " + statusAccountsURL + "\nReady       Unknown\nLast error  The server returned an unexpected response.\n\ntnl wait accounts\n")
 	flags.StateDir, flags.configArgs = "/private/tnl state", configArgs(false, "/local/app config.ts")
-	const command = "\nCheck readiness:\ntnl --config='/local/app config.ts' wait --service accounts --state-dir='/private/tnl state'\n"
+	const command = "\ntnl --config='/local/app config.ts' wait accounts --state-dir='/private/tnl state'\n"
 	render("Service     accounts\nURL         " + statusAccountsURL + "\nReady       Unknown\nLast error  The server returned an unexpected response.\n" + command)
 	s.Routable = true
 	s.Observation.Ready, s.Observation.Status, s.Observation.Reason = false, 503, "runtime.probe_rejected"
 	render("Service  accounts\nURL      " + statusAccountsURL + "\nReady    No (HTTP 503)\n" + command)
 	project.Local.Tunnels.Tunnels[0].State = clientstate.TunnelStateStale
 	project.Local.Tunnels.Tunnels[0].HeartbeatAt = project.Local.CheckedAt.Add(-10 * time.Minute)
-	render("Service    accounts\nURL        " + statusAccountsURL + "\nReady      Unknown (stale)\nLast seen  10 minutes ago\n" + command)
+	render("Service     accounts\nURL         " + statusAccountsURL + "\nReady       Unknown (stale)\nLast seen   10 minutes ago\nLast error  The server returned an unexpected response.\n" + command)
 }
 
 func TestStatusReadinessNeedsACurrentObservation(t *testing.T) {
@@ -432,8 +435,10 @@ func TestStatusSelectedServerInventoryDoesNotClaimReadiness(t *testing.T) {
 		Applied: &controlv1.AppliedProjectConfiguration{ServiceDeclarations: controlv1.ProjectServiceDeclarations{"db": controlv1.Postgres},
 			Services: []controlv1.AppliedProjectService{{Service: "db", ServiceId: new("svc-db"), ServiceKind: "service",
 				Deployment: "production", Hostname: new("db.test"), Port: new(15432)}}}}
-	server.selectService("db", clientstate.TunnelSnapshot{})
-	got := statusTranscript(t, statusCommand{Scope: "server", Service: "db"}, projectStatus{Server: server})
+	if matched, err := server.selectService("db", clientstate.TunnelSnapshot{}, true); err != nil || !matched {
+		t.Fatalf("could not select db: %v", err)
+	}
+	got := statusTranscript(t, statusCommand{ServerOnly: true, Service: "db"}, projectStatus{Server: server})
 	want := "Service        db\nURL            -\nReady          Unknown\nState          disabled\nProtocol       postgres\n" +
 		"Access         connector-only\nPublisher      reported\nReserved port  15432\nDeployment     production\n"
 	if got != want {
@@ -566,5 +571,75 @@ func TestStatusBothReadsServerDespiteUnreadableAppJournal(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "database") || strings.Contains(out.String(), "No local publications") || diagnostics.Len() != 0 {
 		t.Fatalf("server inventory with an unreadable app journal:\n%sdiagnostics:\n%s", &out, &diagnostics)
+	}
+	out.Reset()
+	flags.ServerOnly, flags.Output = true, statusOutputJSON
+	if err := runStatus(t.Context(), flags, &out); err != nil {
+		t.Fatalf("server-only status read its unrequested app journal: %v", err)
+	}
+	var result statusResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Scope != "server" || len(result.Projects) != 1 || result.Projects[0].Local != nil || len(result.Projects[0].Server.Services) != 1 {
+		t.Fatalf("wrong server-only status: %s", &out)
+	}
+}
+
+func TestStatusLastKnownKeepsSavedFailureAfterOwnerExit(t *testing.T) {
+	state, directory := statusTestDatabase(t), t.TempDir()
+	origin, token, requests := statusTestControl(t, []string{statusTestTeamOne}, func(http.ResponseWriter, *http.Request) {
+		t.Error("last-known status must not contact control")
+	})
+	statusTestTunnel(t, state, origin, directory, statusTestSavedID)
+	project := projectConfiguration{Project: clientproject.Project{
+		Root: directory, Config: config.TNL{Services: config.Services{"accounts": {}}},
+	}}
+	saved, err := publisherapp.ReadSnapshotFrom(t.Context(), state, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.Services = []publisherapp.Service{{
+		Name: "accounts", Registered: true, PublicURL: statusAccountsURL, RegistrationID: "registration",
+		RunNumber: 1, Readiness: publisherapp.Readiness{Path: "/"}, Failure: string(failure.ServerResponseInvalid),
+		Observation: &publisherapp.Observation{RegistrationID: "registration", RunNumber: 1, CheckedAt: time.Now().Add(-11 * time.Minute)},
+	}}
+	if err := publisherapp.CommitSnapshot(t.Context(), state, &saved, "service.readiness", &saved.Services[0]); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runStatus(t.Context(), statusCommand{
+		Project: directory, Configuration: project, StateDir: state.Root(), LastKnown: true, Service: "accounts", ServerURL: origin, AccessToken: token,
+	}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range []string{statusAccountsURL, "Ready         Unknown", "Last checked  11 minutes ago",
+		"Last error    The server returned an unexpected response.", "\ntnl wait accounts --state-dir=" + state.Root() + "\n"} {
+		if !strings.Contains(out.String(), fact) {
+			t.Fatalf("missing %q in recorded detail:\n%s", fact, &out)
+		}
+	}
+	if got := requests(); len(got) != 0 {
+		t.Fatalf("last-known status made network requests: %v", got)
+	}
+}
+
+func TestStatusDoesNotShowStalePublicationOverItsReplacement(t *testing.T) {
+	project := statusAccounts()
+	current := &project.Local.Tunnels.Tunnels[0]
+	current.StartedAt = project.Local.CheckedAt.Add(-time.Minute)
+	old := *current
+	old.ID, old.State, old.PublicURL = "old", clientstate.TunnelStateStale, "https://old.example.test"
+	old.StartedAt = current.StartedAt.Add(-time.Minute)
+	project.Local.Tunnels.Tunnels = append([]clientstate.TunnelInfo{old}, project.Local.Tunnels.Tunnels...)
+	got := statusTranscript(t, statusCommand{Service: "accounts"}, project)
+	if !strings.Contains(got, "Ready       Yes") || strings.Contains(got, old.PublicURL) {
+		t.Fatalf("stale tunnel obscured its current replacement:\n%s", got)
+	}
+	// a service with the same local name but a different ID is independent.
+	project.Local.Tunnels.Tunnels[0].ServiceID = "another-service"
+	got = statusTranscript(t, statusCommand{Service: "accounts"}, project)
+	if !strings.Contains(got, old.PublicURL) || !strings.Contains(got, "Unknown (stale)") {
+		t.Fatalf("independent stale tunnel was hidden:\n%s", got)
 	}
 }

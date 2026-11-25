@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/cliflags"
+	"github.com/tnldotdev/tnl/internal/failure"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 type commandApp struct {
@@ -52,7 +55,7 @@ func (a *commandApp) root() *cobra.Command {
 	addClientHelpContent(root)
 	classifyInputErrors(root)
 	configureClientHelp(root)
-	registerProjectCompletions(root)
+	registerProjectCompletions(root, &a.flags.Wait.Service)
 	return root
 }
 
@@ -68,6 +71,35 @@ func (a *commandApp) useDefault(parent, child *cobra.Command) {
 	parent.Flags().AddFlagSet(child.Flags())
 	parent.Use += strings.TrimPrefix(child.Use, child.Name())
 	parent.Annotations = map[string]string{"default": child.Name()}
+}
+
+func useProjectServiceArgument(cmd *cobra.Command, argument, service *string, reason failure.Reason) {
+	parse := cmd.Args
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if err := parse(cmd, args); err != nil {
+			return err
+		}
+		invalid := func(message string) error {
+			help := append(strings.Fields(cmd.CommandPath()), "--help")
+			return failure.Wrap("select project service", reason, &commandGuidance{errors.New(message), message, help})
+		}
+		flag := cmd.Flags().Changed("service")
+		if len(args) == 0 && !flag {
+			return nil
+		}
+		selected := *service
+		if len(args) != 0 {
+			if flag {
+				return invalid("Pass a service name or --service, not both.")
+			}
+			selected = *argument
+		}
+		if !naming.ValidServiceName(selected) {
+			return invalid("Specify a valid project service name.")
+		}
+		*service = selected
+		return nil
+	}
 }
 
 func selectedPath(cmd *cobra.Command) string {

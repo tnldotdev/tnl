@@ -44,7 +44,8 @@ type shareLinkOptions struct {
 
 type shareCheckoutCommand struct {
 	shareLinkOptions `embed:""`
-	Service          string `name:"service" help:"Share only this configured HTTP public service instead of the whole checkout."`
+	ServiceName      string `arg:"" name:"service" optional:"" help:"Share only this configured public HTTP service instead of the whole checkout."`
+	Service          string `name:"service" help:"Share only this configured public HTTP service instead of the whole checkout."`
 }
 
 type teamShareCommand struct {
@@ -55,7 +56,7 @@ type teamShareCommand struct {
 type teamShareCreateCommand struct {
 	ExpiresIn       string `name:"expires-in" help:"Exact URL grant lifetime; omit for perpetual access."`
 	scopedTeamFlags `embed:""`
-	URL             string           `arg:"" name:"url" optional:"" help:"Service ID, public hostname, or HTTPS origin to open."`
+	URL             string           `arg:"" name:"url" optional:"" help:"Public HTTP service name, service ID, hostname, host:port, or HTTPS URL."`
 	Output          statusOutputMode `name:"output" enum:"human,json" default:"human" help:"Output format: ${enum}."`
 }
 
@@ -71,7 +72,7 @@ type linkShareCommand struct {
 
 type shareCreateCommand struct {
 	shareLinkOptions `embed:""`
-	URL              string `arg:"" name:"url" optional:"" help:"Service ID, public hostname, or HTTPS origin to open."`
+	URL              string `arg:"" name:"url" optional:"" help:"Public HTTP service name, service ID, hostname, host:port, or HTTPS URL."`
 	Preview          bool   `name:"preview" help:"Include every current HTTP public URL in this project preview."`
 	checkout         bool
 	service          string
@@ -139,45 +140,11 @@ func parseShareLifetime(value string) (time.Duration, error) {
 }
 
 func selectShareService(selector string, routes []controlv1.ServiceSummary) (controlv1.ServiceSummary, error) {
-	if selector == "" {
-		if len(routes) == 1 {
-			if !opaqueid.Valid(routes[0].Id, opaqueid.ServicePrefix) {
-				return controlv1.ServiceSummary{}, serviceShareResponse()
-			}
-			return routes[0], nil
-		}
-		return controlv1.ServiceSummary{}, failure.Wrap("select share public URL", failure.ShareInputInvalid, errors.New("select the public URL to open, for example tnl share link create web.example.com"))
+	input, err := parseWholeService(selector, failure.ShareInputInvalid)
+	if err != nil {
+		return controlv1.ServiceSummary{}, err
 	}
-	hostname := selector
-	if strings.HasPrefix(selector, "https://") {
-		parsed, err := url.Parse(selector)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Host != parsed.Hostname() || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
-			return controlv1.ServiceSummary{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a service ID, bare hostname, or HTTPS origin")))
-		}
-		hostname = parsed.Hostname()
-	}
-	if !opaqueid.Valid(selector, opaqueid.ServicePrefix) {
-		canonical, err := naming.CanonicalizeHostname(hostname)
-		if err != nil || canonical != hostname {
-			return controlv1.ServiceSummary{}, failure.Wrap("validate share public URL", failure.ShareInputInvalid, errors.Join(err, errors.New("share URL must be a service ID, bare hostname, or HTTPS origin")))
-		}
-	}
-	var selected controlv1.ServiceSummary
-	for _, service := range routes {
-		if service.Id == selector || service.Endpoint != nil && service.Endpoint.Hostname == hostname {
-			if selected.Id != "" && selected.Id != service.Id {
-				return controlv1.ServiceSummary{}, failure.Wrap("select share service", failure.ShareInputInvalid, errors.New("hostname selects more than one service; use an exact service ID"))
-			}
-			selected = service
-		}
-	}
-	if selected.Id != "" {
-		if !opaqueid.Valid(selected.Id, opaqueid.ServicePrefix) {
-			return controlv1.ServiceSummary{}, serviceShareResponse()
-		}
-		return selected, nil
-	}
-	return controlv1.ServiceSummary{}, clientcontrol.ErrNotFound
+	return matchInventory(input, routes, failure.ShareInputInvalid)
 }
 
 func previewShares(ctx context.Context, flags remoteFlags, project projectConfiguration, command, service string, diagnostics io.Writer, services map[string]shareServiceResult) (*clientteam.Session, controlv1.Preview, []controlv1.ServiceSummary, error) {
@@ -274,11 +241,23 @@ func previewShares(ctx context.Context, flags remoteFlags, project projectConfig
 	return session, preview, routes, nil
 }
 
-func runShareCheckout(ctx context.Context, flags shareCheckoutCommand, project projectConfiguration, output, diagnostics io.Writer) error {
+func runShareCheckout(ctx context.Context, flags shareCheckoutCommand, project projectConfiguration, output, diagnostics io.Writer, correction func(string) []string) error {
 	if flags.Service != "" {
 		service, found := project.Config.Services[flags.Service]
-		if !found || service.Public == nil || !*service.Public || config.Protocol(service) != "http" {
-			return failure.Wrap("select share service", failure.ShareInputInvalid, errors.New("--service must select a configured HTTP public service"))
+		if !found || !checkoutShareEligible(service) {
+			message := "Select a configured public HTTP service."
+			guidance := &commandGuidance{
+				error:   failure.Wrap("select share service", failure.ShareInputInvalid, errors.New("not a configured public HTTP service")),
+				message: message,
+			}
+			// do not redirect a correctly spelled private or non-HTTP service
+			// to a different public service.
+			if !found && correction != nil {
+				if candidate := checkoutShareSuggestion(flags.Service, project.Config.Services); candidate != "" {
+					guidance.help = correction(candidate)
+				}
+			}
+			return guidance
 		}
 	}
 	return createShare(ctx, shareCreateCommand{
@@ -287,6 +266,91 @@ func runShareCheckout(ctx context.Context, flags shareCheckoutCommand, project p
 		checkout:         true,
 		service:          flags.Service,
 	}, project, false, output, diagnostics)
+}
+
+func checkoutShareEligible(service config.Service) bool {
+	return service.Public != nil && *service.Public && config.Protocol(service) == "http"
+}
+
+func checkoutShareSuggestion(selected string, services config.Services) string {
+	if !naming.ValidServiceName(selected) {
+		return ""
+	}
+	var candidate string
+	for name, service := range services {
+		if !checkoutShareEligible(service) || !naming.ValidServiceName(name) || !oneServiceNameTypo(selected, name) {
+			continue
+		}
+		if candidate != "" {
+			return ""
+		}
+		candidate = name
+	}
+	return candidate
+}
+
+func oneServiceNameTypo(a, b string) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	if len(b)-len(a) > 1 {
+		return false
+	}
+	i := 0
+	for i < len(a) && a[i] == b[i] {
+		i++
+	}
+	if len(a) < len(b) {
+		return a[i:] == b[i+1:]
+	}
+	if i == len(a) {
+		return false
+	}
+	return a[i+1:] == b[i+1:] ||
+		i+1 < len(a) && a[i] == b[i+1] && a[i+1] == b[i] && a[i+2:] == b[i+2:]
+}
+
+func checkoutShareCorrection(parent *cobra.Command, call commandCall, flags shareCheckoutCommand, name string) []string {
+	args := []string{"tnl"}
+	if selection := call.project.Selection; selection.Explicit && selection.Path != "" {
+		args = append(args, "--config", selection.Path)
+	}
+	args = append(args, "share")
+	useFlag := call.command.Flags().Changed("service")
+	for _, sub := range parent.Commands() {
+		useFlag = useFlag || sub.Name() == name || slices.Contains(sub.Aliases, name)
+	}
+	if useFlag {
+		args = append(args, "--service")
+	}
+	args = append(args, name)
+	changed := call.command.Flags().Changed
+	if changed("expires-in") {
+		args = append(args, "--expires-in", flags.ExpiresIn)
+	}
+	if changed("name") {
+		args = append(args, "--name", flags.Name)
+	}
+	if changed("output") || flags.Output != statusOutputHuman {
+		args = append(args, "--output", string(flags.Output))
+	}
+	if flags.ServerURL != "" {
+		server, err := naming.CanonicalControlURL(flags.ServerURL)
+		if err != nil {
+			return nil
+		}
+		args = append(args, "--server", server)
+	}
+	if flags.Team != "" {
+		args = append(args, "--team", flags.Team)
+	}
+	if flags.StateDir != "" {
+		args = append(args, "--state-dir", flags.StateDir)
+	}
+	if noTelemetry, _ := call.command.Flags().GetBool("no-telemetry"); noTelemetry {
+		args = append(args, "--no-telemetry")
+	}
+	return args
 }
 
 func checkoutShareEntry(service string, services map[string]shareServiceResult) (string, error) {
@@ -765,12 +829,15 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	f := a.flags
 	cShare := &cobra.Command{
 		Use: "share", Short: "Create a share link for this checkout's preview.", GroupID: "access",
-		Long: "Print one link to this checkout's current public HTTP services. It expires after 24 hours by default. Use --service to include just one service, or tnl share revoke to end access early.",
+		Long: "Print one link to this checkout's current public HTTP services. It expires after 24 hours by default. Pass a service name or use --service to include just one service. Use tnl share revoke to end access early.",
 	}
 	cShareCreate := &cobra.Command{Use: "create", Short: "Print a share link for this checkout; create is optional."}
 	a.leaf(cShareCreate, &f.Share.Create, func(call commandCall) error {
-		return runShareCheckout(call.ctx, f.Share.Create, call.project, a.out, a.errOut)
+		return runShareCheckout(call.ctx, f.Share.Create, call.project, a.out, a.errOut, func(name string) []string {
+			return checkoutShareCorrection(cShare, call, f.Share.Create, name)
+		})
 	})
+	useProjectServiceArgument(cShareCreate, &f.Share.Create.ServiceName, &f.Share.Create.Service, failure.ShareInputInvalid)
 	cShare.AddCommand(cShareCreate)
 	a.useDefault(cShare, cShareCreate)
 	cShareService := &cobra.Command{Use: "service", Short: "Share one service by its configured name or service ID."}
@@ -844,6 +911,7 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	a.leaf(cShareLinkCreate, &f.Share.Link.Create, func(call commandCall) error {
 		return runShareCreate(call.ctx, f.Share.Link.Create, call.project, a.out, a.errOut)
 	})
+	requireWholeServiceArgument(cShareLinkCreate, 0, failure.ShareInputInvalid)
 	cShareLink.AddCommand(cShareLinkCreate)
 	cShare.AddCommand(cShareLink)
 	cShareToken := &cobra.Command{Use: "token", Short: "Create a share token for an HTTP client."}
@@ -854,6 +922,7 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	a.leaf(cShareTokenCreate, &f.Share.Token.Create, func(call commandCall) error {
 		return runShareTokenCreate(call.ctx, f.Share.Token.Create, call.project, a.out, a.errOut)
 	})
+	requireWholeServiceArgument(cShareTokenCreate, 0, failure.ShareInputInvalid)
 	cShareTokenCreate.Flags().Lookup("preview").Hidden = true
 	cShareTokenCreate.Flags().Lookup("name").Usage = "Required. Identify the automation using this token."
 	cShareToken.AddCommand(cShareTokenCreate)
@@ -863,11 +932,13 @@ func (a *commandApp) newShareCommand() *cobra.Command {
 	a.leaf(cShareTeamCreate, &f.Share.Team.Create, func(call commandCall) error {
 		return runShareTeamCreate(call.ctx, f.Share.Team.Create, call.project, a.out, a.errOut)
 	})
+	requireWholeServiceArgument(cShareTeamCreate, 0, failure.ShareInputInvalid)
 	cShareTeam.AddCommand(cShareTeamCreate)
 	cShareTeamRevoke := &cobra.Command{Use: "revoke", Short: "Revoke team access to this preview or URL."}
 	a.leaf(cShareTeamRevoke, &f.Share.Team.Revoke, func(call commandCall) error {
 		return runShareTeamRevoke(call.ctx, f.Share.Team.Revoke, call.project, a.out, a.errOut)
 	})
+	requireWholeServiceArgument(cShareTeamRevoke, 0, failure.ShareInputInvalid)
 	cShareTeam.AddCommand(cShareTeamRevoke)
 	cShare.AddCommand(cShareTeam)
 	cShareList := &cobra.Command{Use: "list", Short: "List access for the selected team."}

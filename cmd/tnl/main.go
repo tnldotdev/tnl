@@ -637,8 +637,16 @@ func commandFailureReason(command string) failure.Reason {
 
 func canonicalParsedCommand(command string) string {
 	switch command {
-	case "share create":
+	case "audit list <service-or-address>":
+		return "audit list"
+	case "share create", "share create <service>":
 		return "share"
+	case "inspect list <service>":
+		return "inspect list"
+	case "wait <service...>":
+		return "wait"
+	case "watch <service>":
+		return "watch"
 	case "auth login run":
 		return "auth login"
 	case "publish":

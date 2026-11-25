@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
 	installedjobs "github.com/tnldotdev/tnl/internal/installed"
@@ -105,14 +106,14 @@ func TestObservationRecoveryKeepsInvocationScope(t *testing.T) {
 	flags := cli{
 		ConfigPath: "/work tree/tnl.yml",
 		Wait:       waitCommand{StateDir: "/client state", Service: []string{"accounts"}, Output: "json"},
-		Watch:      watchCommand{StateDir: "/other state", After: "expired", Output: "ndjson"},
+		Watch:      watchCommand{StateDir: "/other state", Service: "accounts", After: "expired", Count: 1, Timeout: 30 * time.Second, Output: "ndjson"},
 	}
 	for _, tt := range []struct {
 		reason failure.Reason
 		want   []string
 	}{
-		{failure.AppReadinessTimeout, []string{"tnl", "--config", "/work tree/tnl.yml", "status", "--scope", "local", "--service", "accounts", "--state-dir", "/client state", "--output", "json"}},
-		{failure.AppCursorExpired, []string{"tnl", "--config", "/work tree/tnl.yml", "watch", "--state-dir", "/other state", "--output", "ndjson"}},
+		{failure.AppReadinessTimeout, []string{"tnl", "--config", "/work tree/tnl.yml", "status", "--last-known", "--service", "accounts", "--state-dir", "/client state", "--output", "json"}},
+		{failure.AppCursorExpired, []string{"tnl", "--config", "/work tree/tnl.yml", "watch", "--service", "accounts", "--count", "1", "--timeout", "30s", "--state-dir", "/other state", "--output", "ndjson"}},
 	} {
 		err := observationFollowup(failure.Wrap("observe", tt.reason, errors.New("test")), flags)
 		if cmd := commandDiagnosticFor(err).Command; !slices.Equal(cmd, tt.want) {

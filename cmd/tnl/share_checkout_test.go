@@ -31,6 +31,8 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 		service string
 	}{
 		{[]string{"share"}, "share", ""},
+		{[]string{"share", "accounts"}, "share", "accounts"},
+		{[]string{"share", "create", "accounts"}, "share", "accounts"},
 		{[]string{"share", "--service", "web", "--expires-in", "7d"}, "share", "web"},
 		{[]string{"share", "create", "--service", "web"}, "share", "web"},
 		{[]string{"share", "link", "create", "web.example.test"}, "share link create <url>", ""},
@@ -58,6 +60,7 @@ func TestShareCheckoutCommandParsing(t *testing.T) {
 		})
 	}
 	for _, args := range [][]string{
+		{"share", "accounts", "web"},
 		{"share", "--preview"},
 		{"share", "list", "--service", "web"},
 		{"share", "link", "create", "--service", "web"},
@@ -115,10 +118,10 @@ func TestShareCheckoutHelpDescribesScopeAndLifetime(t *testing.T) {
 
 func TestShareCheckoutValidatesBeforeAuthentication(t *testing.T) {
 	project := projectConfiguration{Project: clientproject.Project{Config: config.TNL{
-		Services: config.Services{"web": {Public: new(true)}, "private": {}},
+		Services: config.Services{"web": {Public: new(true)}, "private": {}, "database": {Public: new(true), Protocol: new("postgres")}},
 	}}}
-	for _, service := range []string{"missing", "private"} {
-		err := runShareCheckout(t.Context(), shareCheckoutCommand{Service: service}, project, io.Discard, io.Discard)
+	for _, service := range []string{"missing", "private", "database"} {
+		err := runShareCheckout(t.Context(), shareCheckoutCommand{Service: service}, project, io.Discard, io.Discard, nil)
 		if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid {
 			t.Fatalf("service %q failure = %v", service, err)
 		}
@@ -135,6 +138,100 @@ func TestShareCheckoutValidatesBeforeAuthentication(t *testing.T) {
 		if !ok || reason != failure.ShareInputInvalid && reason != failure.PreviewNotSaved {
 			t.Fatalf("checkout share %v failure = %v", args, err)
 		}
+	}
+}
+
+func TestShareCheckoutCorrectionKeepsScopeAndOmitsCredentials(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "project config.yml")
+	source := `version: 1
+tnl:
+  services:
+    accounts: {}
+    account: {}
+    acount: {}
+    billing: {}
+    billings: {}
+    list: {}
+  deployments:
+    local:
+      targets:
+        accounts:
+          public: true
+        account: {}
+        acount: {}
+        billing:
+          public: true
+        billings:
+          public: true
+        list:
+          public: true
+`
+	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(t.TempDir(), "client state")
+	const token = "not-a-credential-to-copy"
+	const server = "https://control.example.test"
+	const label = "review '$(not a command)'"
+	for _, test := range []struct {
+		name      string
+		selector  []string
+		corrected []string
+		mode      string
+		server    string
+	}{
+		{"unique typo", []string{"acounts"}, []string{"accounts"}, "json", server},
+		{"explicit flag", []string{"--service=accoutns"}, []string{"--service", "accounts"}, "human", server},
+		{"reserved command name", []string{"lsit"}, []string{"--service", "list"}, "json", server},
+		{"ambiguous typo", []string{"billingx"}, nil, "json", server},
+		{"distant name", []string{"totally-different"}, nil, "json", server},
+		{"exact private service", []string{"account"}, nil, "human", server},
+		{"invalid server", []string{"acounts"}, nil, "json", "https://" + token + "@control.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			common := []string{"--expires-in", "1h", "--name", label, "--output", test.mode,
+				"--server", test.server, "--team", "My Team", "--state-dir", stateDir, "--no-telemetry"}
+			args := append([]string{"--config", configPath, "share"}, test.selector...)
+			args = append(args, common...)
+			args = append(args, "--access-token", token)
+			var output, diagnostics bytes.Buffer
+			err := run(t.Context(), args, &output, &diagnostics)
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid || output.Len() != 0 {
+				t.Fatalf("invalid share created a link or was misclassified: %q, %v", output.String(), err)
+			}
+			var want []string
+			if test.corrected != nil {
+				want = append([]string{"tnl", "--config", configPath, "share"}, test.corrected...)
+				want = append(want, common...)
+			}
+			const message = "Select a configured public HTTP service."
+			writeCommandError(&diagnostics, err)
+			if !strings.Contains(diagnostics.String(), message) || strings.Contains(diagnostics.String(), token) {
+				t.Fatalf("share diagnostic = %q", diagnostics.String())
+			}
+			if test.mode == "json" {
+				var got commandDiagnostic
+				if err := json.Unmarshal(diagnostics.Bytes(), &got); err != nil || got.Message != message || got.Action != "" || !slices.Equal(got.Command, want) {
+					t.Fatalf("share diagnostic = %s, %v; want command %q", diagnostics.String(), err, want)
+				}
+			} else if got := presentHumanFailure(err).action; got != guidanceCommand(want) {
+				t.Fatalf("human share suggestion = %q, want %q", got, want)
+			}
+			if want != nil {
+				var flags cli
+				parsed, err := commandForTest(&flags, io.Discard)(want[1:])
+				selected := flags.Share.Create
+				if err != nil || commandID(parsed) != "share" || selected.Service != test.corrected[len(test.corrected)-1] ||
+					selected.ExpiresIn != "1h" || selected.Name != label || selected.Output != statusOutputMode(test.mode) ||
+					selected.Team != "My Team" || selected.StateDir != stateDir || selected.ServerURL != server || selected.AccessToken != "" || flags.ConfigPath != configPath {
+					t.Fatalf("corrected argv did not parse as a narrow share: %q, %v", want, err)
+				}
+			}
+		})
 	}
 }
 
@@ -279,6 +376,8 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 	}{
 		{"checkout", []string{"share", "--expires-in=7d"}, []string{webID, apiID}, webID, true, false},
 		{"checkout JSON", []string{"share", "--output=json"}, []string{webID, apiID}, webID, true, true},
+		{"positional service", []string{"share", "api"}, []string{apiID}, apiID, false, false},
+		{"positional service JSON", []string{"share", "create", "api", "--output=json"}, []string{apiID}, apiID, false, true},
 		{"one service", []string{"share", "--service=web"}, []string{webID}, webID, false, false},
 		{"API service", []string{"share", "--service=api", "--output=json"}, []string{apiID}, apiID, false, true},
 		{"exact URL", []string{"share", "link", "create", "web.example.test"}, []string{webID}, webID, false, false},
@@ -340,6 +439,26 @@ func TestShareCheckoutCreatesCapturedScopeAndKeepsExactURLCommandsNarrow(t *test
 				}
 			} else if !strings.HasPrefix(output.String(), "https://") || strings.Count(output.String(), "\n") != 1 {
 				t.Fatalf("share did not print one raw link: %q", output.String())
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"share", "aip"},
+		{"share", "private"},
+		{"share", "api.example.test"},
+		{"share", ""},
+		{"share", "--service="},
+		{"share", "--service=aip"},
+		{"share", "api", "--service=web"},
+		{"share", "create", "--service="},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			args = append([]string{"--no-telemetry", "--config", configPath}, args...)
+			args = append(args, "--server", server.URL, "--access-token", access.String(), "--team", teamID, "--state-dir", stateDir)
+			var output bytes.Buffer
+			err := run(t.Context(), args, &output, io.Discard)
+			if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ShareInputInvalid || output.Len() != 0 || len(lookups) != 0 || len(created) != 0 {
+				t.Fatalf("explicit service widened or misclassified: output=%q error=%v", output.String(), err)
 			}
 		})
 	}

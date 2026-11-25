@@ -24,7 +24,8 @@ type auditCommand struct {
 
 type auditListCommand struct {
 	scopedTeamFlags `embed:""`
-	Service         string           `name:"service" help:"service name, public hostname, or immutable service ID."`
+	Service         string           `name:"service" help:"Service name, immutable service ID, hostname, host:port, or service URL."`
+	Selector        string           `arg:"" name:"service-or-address" optional:"" help:"Service name, immutable service ID, hostname, host:port, or service URL."`
 	Since           string           `name:"since" default:"24h" help:"Read events since a positive duration such as 24h, or an RFC3339 timestamp."`
 	After           string           `name:"after" help:"Resume after the cursor returned by a previous audit list."`
 	Limit           int              `name:"limit" default:"100" help:"Maximum events to return, from 1 to 10000."`
@@ -72,15 +73,24 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 		}
 		params.After = &flags.After
 	}
-	if flags.Service != "" {
-		if opaqueid.Valid(flags.Service, opaqueid.ServicePrefix) {
-			params.ServiceId = &flags.Service
-		} else {
-			hostname, err := naming.CanonicalizeHostname(flags.Service)
-			if err != nil || hostname != flags.Service {
-				return failure.Wrap("select audit service", failure.InvalidTunnelFlags, errors.New("--service requires a service name, hostname or ID"))
-			}
-			params.Service = &flags.Service
+	if flags.Selector != "" {
+		if flags.Service != "" {
+			return serviceInputError(failure.InvalidTunnelFlags, "Pass a service selector either as an argument or with --service, not both.")
+		}
+		flags.Service = flags.Selector
+	}
+	input, err := parseWholeService(flags.Service, failure.InvalidTunnelFlags)
+	if err != nil {
+		return err
+	}
+	switch input.Kind {
+	case naming.SelectorID:
+		params.ServiceId = &input.ID
+	case naming.SelectorName:
+		params.Service = &input.Name
+	case naming.SelectorAddress:
+		if input.Scheme == "" && !input.ExplicitPort {
+			params.Service = &input.Host
 		}
 	}
 	session, err := openTeamSession(ctx, flags.selection(), "tnl audit list", diagnostics)
@@ -91,6 +101,14 @@ func runAuditList(ctx context.Context, flags auditListCommand, output, diagnosti
 	current, err := session.Current(ctx)
 	if err != nil {
 		return err
+	}
+	if input.Kind == naming.SelectorAddress && params.Service == nil {
+		item, err := lookupManagedService(ctx, session, input)
+		if err != nil {
+			return err
+		}
+		params.ServiceId = &item.Id
+		flags.Service = item.Id
 	}
 	page, err := readServiceAudit(ctx, session.Authenticated().Control, current.Team().Id, params, flags.Limit)
 	if err != nil {
@@ -183,6 +201,14 @@ func (a *commandApp) newAuditCommand() *cobra.Command {
 	a.leaf(cAuditList, &f.Audit.List, func(call commandCall) error {
 		return runAuditList(call.ctx, f.Audit.List, a.out, a.errOut)
 	})
+	bind := cAuditList.Args
+	cAuditList.Args = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 && args[0] == "" || cmd.Flags().Changed("service") && f.Audit.List.Service == "" {
+			return serviceInputError(failure.InvalidTunnelFlags, "The service selector cannot be empty.")
+		}
+		return bind(cmd, args)
+	}
 	cAudit.AddCommand(cAuditList)
+	a.useDefault(cAudit, cAuditList)
 	return cAudit
 }

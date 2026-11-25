@@ -128,7 +128,7 @@ func TestClientHelpShorthandAndTokenScope(t *testing.T) {
 		want []string
 		omit []string
 	}{
-		{[]string{"connect"}, []string{"tnl connect <name>", "tnl connect <command>", "<name> Configured service name or exact service ID.", "Kubernetes:", "--listen IP:PORT"}, []string{"detached-child", "kube-credential"}},
+		{[]string{"connect"}, []string{"tnl connect <name>", "tnl connect <command>", "<name> Configured service name, exact service ID,", "Kubernetes:", "--listen IP:PORT"}, []string{"detached-child", "kube-credential"}},
 		{[]string{"connect", "available"}, []string{"--output FORMAT", "Server and team:"}, []string{"--listen", "Kubernetes:"}},
 		{[]string{"share", "token", "create"}, []string{"--name NAME Required."}, []string{"--preview", "Optional label"}},
 		{[]string{"share", "link", "create"}, []string{"--preview", "Optional label"}, []string{"--name NAME Required."}},

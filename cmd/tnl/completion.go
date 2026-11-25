@@ -1,7 +1,7 @@
 package main
 
 import (
-	"maps"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	clientproject "github.com/tnldotdev/tnl/internal/client/project"
 	"github.com/tnldotdev/tnl/internal/client/project/meta"
+	"github.com/tnldotdev/tnl/internal/connector"
+	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func completionFacts(cmd *cobra.Command) meta.Completion {
@@ -45,20 +47,71 @@ func completeNames(values []string, prefix string) ([]string, cobra.ShellCompDir
 	return slices.DeleteFunc(values, func(s string) bool { return !strings.HasPrefix(s, prefix) }), cobra.ShellCompDirectiveNoFileComp
 }
 
-func registerProjectCompletions(root *cobra.Command) {
-	services := func(cmd *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
-		return completeNames(slices.Collect(maps.Keys(completionFacts(cmd).Services)), prefix)
+func completeProjectServices(cmd *cobra.Command, prefix string, used []string, positional bool) ([]string, cobra.ShellCompDirective) {
+	var completions []string
+	for name, protocol := range completionFacts(cmd).Services {
+		if !strings.HasPrefix(name, prefix) || slices.Contains(used, name) {
+			continue
+		}
+		if positional && slices.ContainsFunc(cmd.Commands(), func(sub *cobra.Command) bool { return sub.Name() == name || sub.HasAlias(name) }) {
+			continue
+		}
+		completions = append(completions, cobra.CompletionWithDesc(name, protocol))
+	}
+	slices.Sort(completions)
+	return completions, cobra.ShellCompDirectiveNoFileComp
+}
+
+func completeConnectClients(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 1 {
+		return cobra.NoFileCompletions(cmd, args, prefix)
+	}
+	selector, err := naming.ParseServiceSelector(args[0])
+	if err != nil || selector.Resource {
+		return cobra.NoFileCompletions(cmd, args, prefix)
+	}
+	protocol := selector.Protocol
+	if selector.Kind == naming.SelectorName {
+		protocol = completionFacts(cmd).Services[selector.Name]
+	}
+	return completeNames(connector.ClientNames(protocol), prefix)
+}
+
+func positionalServiceCompletion(path string) bool {
+	switch path {
+	case "status", "wait", "watch", "share create", "inspect list", "audit list", "publish", "connect start":
+		return true
+	default:
+		return false
+	}
+}
+
+func registerProjectCompletions(root *cobra.Command, waitServices *[]string) {
+	// cobra parses completion flags twice, inserting a synthetic -- on its
+	// first pass. inspect the raw completion request rather than ArgsLenAtDash.
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if cmd.Name() != cobra.ShellCompRequestCmd || len(args) < 2 {
+			return
+		}
+		if dash := slices.Index(args[:len(args)-1], "--"); dash >= 0 {
+			target, _, err := root.Find(args[:dash])
+			if err == nil && positionalServiceCompletion(selectedPath(target)) {
+				cmd.Run = func(cmd *cobra.Command, _ []string) {
+					fmt.Fprintf(cmd.OutOrStdout(), ":%d\n", cobra.ShellCompDirectiveNoFileComp)
+				}
+			}
+		}
 	}
 	deployments := func(cmd *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
 		return completeNames(completionFacts(cmd).Deployments, prefix)
 	}
-	deploymentServices := func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+	deploymentServices := func(cmd *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
 		deployment, _ := cmd.Flags().GetString("deployment")
 		key, _ := cmd.Flags().GetString("project-key")
 		if deployment == "" || key != "" {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
-		return services(cmd, args, prefix)
+		return completeProjectServices(cmd, prefix, nil, false)
 	}
 	register := func(cmd *cobra.Command, name string, complete cobra.CompletionFunc) {
 		if _, ok := cmd.GetFlagCompletionFunc(name); ok {
@@ -73,20 +126,33 @@ func registerProjectCompletions(root *cobra.Command) {
 		if cmd.Flags().Lookup("deployment") != nil {
 			register(cmd, "deployment", deployments)
 		}
-		// a flag named --service can select a project name or an exact saved ID.
-		switch selectedPath(cmd) {
-		case "wait", "inspect list", "share create", "audit list":
-			register(cmd, "service", services)
+		path := selectedPath(cmd)
+		switch path {
+		case "wait":
+			register(cmd, "service", func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+				return completeProjectServices(cmd, prefix, slices.Concat(args, *waitServices), false)
+			})
+		case "status", "watch", "inspect list", "share create", "audit list":
+			register(cmd, "service", func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
+				if len(args) != 0 || cmd.Flags().Changed("service") {
+					return cobra.NoFileCompletions(cmd, args, prefix)
+				}
+				return completeProjectServices(cmd, prefix, nil, false)
+			})
 		case "publisher setup", "publisher provision":
 			register(cmd, "service", deploymentServices)
+		case "connect start":
+			register(cmd, "client", completeConnectClients)
 		}
-		switch cmd.CommandPath() {
-		case "tnl connect", "tnl connect start":
+		if positionalServiceCompletion(path) {
 			cmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
-				if len(args) != 0 {
-					return nil, cobra.ShellCompDirectiveNoFileComp
+				if path == "wait" {
+					return completeProjectServices(cmd, prefix, slices.Concat(args, *waitServices), true)
 				}
-				return services(cmd, args, prefix)
+				if len(args) != 0 || cmd.Flags().Changed("service") {
+					return cobra.NoFileCompletions(cmd, args, prefix)
+				}
+				return completeProjectServices(cmd, prefix, nil, true)
 			}
 		}
 		for _, sub := range cmd.Commands() {

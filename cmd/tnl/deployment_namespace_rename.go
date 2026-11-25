@@ -15,7 +15,7 @@ type deploymentNamespaceRenameCommand struct {
 	ProjectKey       string `name:"project-key" help:"Applied project key; defaults to this Git configuration source."`
 	Deployment       string `arg:"" name:"deployment" help:"Current or historical deployment selector."`
 	Label            string `arg:"" name:"label" help:"New DNS namespace label beneath this project's existing domain."`
-	ExpectedRevision int64  `required:"" help:"Applied revision from tnl status --scope=server --output=json; reuse on retry."`
+	ExpectedRevision int64  `required:"" help:"Applied revision from tnl status --server-only --deployment NAME --output json; reuse on retry."`
 	RequestID        string `name:"request-id" required:"" help:"Unique operation key; reuse with the same arguments after a lost reply."`
 }
 

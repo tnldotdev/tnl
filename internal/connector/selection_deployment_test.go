@@ -107,21 +107,34 @@ func TestConnectTCPRequiresItsExplicitDeploymentBinding(t *testing.T) {
 	}
 }
 
+func TestConnectUnboundProjectKeyDoesNotSelectAnotherServicesAlias(t *testing.T) {
+	project := clientproject.Project{
+		Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"orders": {}, "other": {}}},
+		Config:   config.TNL{Deployment: "staging", Services: config.Services{"other": {Name: new("orders")}}},
+	}
+	reader := &deploymentSelectionReader{}
+	_, err := Select(t.Context(), reader, project, "orders", "tm_shop")
+	if reason, _ := failure.ReasonOf(err); reason != failure.InvalidTunnelFlags || !strings.Contains(err.Error(), "has no binding") || reader.calls != 0 {
+		t.Fatalf("unbound project key changed intent: %v, inventory calls = %d", err, reader.calls)
+	}
+}
+
 func TestConnectExactServiceIDRemainsExplicitWithUnboundDeclarations(t *testing.T) {
+	const id = "svc_0123456789abcdefghijkl"
 	project := clientproject.Project{
 		Declared: &config.Project{Services: map[string]config.ServiceDeclaration{"db": {Protocol: new("postgres")}}},
 		Config:   config.TNL{Deployment: "staging", Services: config.Services{}},
 	}
 	reader := &deploymentSelectionReader{services: []controlv1.ServiceSummary{{
-		Id: "svc_production", Name: "db", TeamId: "tm_shop", Protocol: "postgres",
+		Id: id, Name: "db", TeamId: "tm_shop", Protocol: "postgres",
 	}}}
-	selected, err := Select(t.Context(), reader, project, "svc_production", "tm_shop")
-	if err != nil || selected.Id != "svc_production" || reader.calls != 1 {
+	selected, err := Select(t.Context(), reader, project, id, "tm_shop")
+	if err != nil || selected.Id != id || reader.calls != 1 {
 		t.Fatalf("explicit ID selection = %q, %v, calls=%d", selected.Id, err, reader.calls)
 	}
 	project.Declared = nil
 	selected, err = Select(t.Context(), reader, project, "db", "tm_shop")
-	if err != nil || selected.Id != "svc_production" || reader.calls != 2 {
+	if err != nil || selected.Id != id || reader.calls != 2 {
 		t.Fatalf("unconfigured inventory selection = %q, %v, calls=%d", selected.Id, err, reader.calls)
 	}
 }

@@ -154,10 +154,6 @@ func presentHumanFailure(err error) presentedFailure {
 		presented.action = guidanceCommand(guidance.help)
 		return presented
 	}
-	if probe, ok := errors.AsType[*pingFailure](err); ok && probe != nil && failure.Only(err, probe) {
-		reason, _ := failure.ReasonOf(err)
-		return presentedFailure{reason: reason, message: probe.message()}
-	}
 	if service, ok := errors.AsType[*missingServiceName](err); ok && service != nil && failure.Only(err, service) && naming.ValidServiceName(service.name) {
 		return presentedFailure{reason: failure.ServiceNotConfigured,
 			message: fmt.Sprintf("Service %q is not configured.", service.name), action: "Check the service name in your project configuration."}
@@ -181,6 +177,10 @@ func presentHumanFailure(err error) presentedFailure {
 
 // presentFailure uses authored messages and explicitly approved fields.
 func presentFailure(err error) presentedFailure {
+	if probe, ok := errors.AsType[*pingFailure](err); ok && probe != nil && failure.Only(err, probe) {
+		reason, _ := failure.ReasonOf(err)
+		return presentedFailure{reason: reason, message: probe.message()}
+	}
 	var problem *clientcontrol.ProblemError
 	if errors.As(err, &problem) {
 		if id, ok := problem.CredentialDeliveryResourceID(); ok {

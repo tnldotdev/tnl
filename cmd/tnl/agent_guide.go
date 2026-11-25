@@ -15,9 +15,9 @@ func (a *commandApp) newAgentGuideCommand() *cobra.Command {
 	cmd.RunE = func(*cobra.Command, []string) error {
 		version := buildinfo.Line("tnl")
 		sections := []struct{ command, use string }{
-			{"tnl status --scope local --output json", "Read the recorded local snapshot. A saved ready state is not a fresh readiness check."},
-			{"tnl wait --service NAME --output json", "Check readiness now. Replace NAME with a configured service name."},
-			{"tnl watch --output ndjson --after CURSOR", "Resume after the last processed local event. Keep the cursor with its worktree and state directory. Omit --after on the first watch or if the cursor expired."},
+			{"tnl status --last-known --output json", "Read the recorded local snapshot without asking the server. A saved ready state is not a fresh readiness check."},
+			{"tnl wait accounts api --timeout 30s --output json", "Check readiness now. Replace accounts and api with configured service names. Both must pass."},
+			{"tnl watch accounts --after \"$CURSOR\" --count 1 --timeout 30s --output ndjson", "Read one matching new event after the last processed cursor. Keep the cursor with its worktree and state directory. Omit --after on the first watch or if the cursor expired."},
 			{"tnl feedback list --output json", "Read feedback from the publishing worktree. Feedback watch has its own numeric cursor."},
 			{"tnl auth login start --output json", "Start login only when asked to sign in. Keep session credentials and one-time secrets out of logs."},
 			{"tnl apply --deployment production --diff --output json", "Review the team, deployment and base revision. Ask before applying production changes. A diff does not reserve a revision."},
