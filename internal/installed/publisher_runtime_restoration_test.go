@@ -80,10 +80,11 @@ func restoredInstallPublisher(t *testing.T, r *Registry, f *publishingtest.Fixtu
 	if err != nil || !found || len(retained.SigningKey) != ed25519.PrivateKeySize {
 		t.Fatal("missing actually enrolled signing key", err)
 	}
-	job := Job{Kind: KindService, ID: name, Server: f.URL, ServiceID: saved.Id, PublisherIdentityID: identity.ClientId,
+	job := Job{Kind: KindService, Name: name, Server: f.URL, ServiceID: saved.Id, PublisherIdentityID: identity.ClientId,
 		GrantID: identity.GrantId, TrustRevision: saved.TrustRevision, PublisherPool: saved.PublisherPool,
 		Protocol: config.ProtocolHTTP, Target: target, TelemetryDisabled: disabled}
-	if err := r.Install(t.Context(), job, identity, retained.SigningKey); err != nil {
+	job, err = r.Install(t.Context(), job, identity, retained.SigningKey)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return job, identity, retained.SigningKey
@@ -373,7 +374,7 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 			t.Fatal("saved publishers did not survive boot", err)
 		}
 		for _, job := range jobs {
-			if job.TelemetryDisabled != (job.ID == "disabled") || job.Server != f.URL || job.Kind != KindService {
+			if job.TelemetryDisabled != (job.Name == "disabled") || job.Server != f.URL || job.Kind != KindService {
 				t.Fatal("publisher restart changed saved selection")
 			}
 			identity, key, _, err := r.signingIdentity(t.Context(), job)
@@ -381,10 +382,12 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 				t.Fatal("supervisor restart changed the actually enrolled identity or key", err)
 			}
 		}
-		var enabled Job
+		var enabled, disabled Job
 		for _, job := range originalJobs {
 			if !job.TelemetryDisabled {
 				enabled = job
+			} else {
+				disabled = job
 			}
 		}
 		release := make(chan struct{})
@@ -427,7 +430,7 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 		// release before the join cleanup on an early assertion failure too.
 		t.Cleanup(allowEnabled)
 		disabledReady := restoredPublisherReadyStatus(t, statuses)
-		if disabledReady.job != "disabled" || disabledReady.status.State != JobReady || disabledReady.status.Attempts != 1 || disabledReady.status.RunNumber != uint64(boot+1) {
+		if disabledReady.job != disabled.ID || disabledReady.status.State != JobReady || disabledReady.status.Attempts != 1 || disabledReady.status.RunNumber != uint64(boot+1) {
 			t.Fatalf("boot %d disabled publisher did not reach actual Ready before the enabled preparation was released: %+v", boot+1, disabledReady)
 		}
 		telemetry.barrier(t)
@@ -440,7 +443,7 @@ func TestInstalledPublishersKeepTelemetryChoiceAcrossTwoSupervisorStarts(t *test
 			if event.status.State != JobReady || event.status.Attempts != 1 || event.status.RunNumber != uint64(boot+1) {
 				t.Fatalf("boot %d publisher did not reach real Ready on its first boot attempt: %+v", boot+1, event)
 			}
-			if event.job == "enabled" {
+			if event.job == enabled.ID {
 				break
 			}
 		}

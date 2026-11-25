@@ -427,8 +427,9 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := installedjobs.Job{Kind: installedjobs.KindDeployment, ID: installedjobs.JobKey(f.url, "deployment", value.Member.DeploymentId+":replica-1"), Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, DeploymentMember: &value.Member, DeploymentInstance: "replica-1", IdentityDir: identityDir}
-	if err := registry.InstallDeployment(t.Context(), job, value.Member, private); err != nil {
+	job := installedjobs.Job{Kind: installedjobs.KindDeployment, Name: "production-replica-1", Server: f.url, PublisherIdentityID: value.Member.PublisherIdentityId, DeploymentMember: &value.Member, DeploymentInstance: "replica-1", IdentityDir: identityDir}
+	job, err = registry.InstallDeployment(t.Context(), job, value.Member, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	supervisorCtx, stopSupervisor := context.WithCancel(t.Context())
@@ -450,7 +451,7 @@ func TestIntegrationCLIDeploymentIdentitySurvivesTaskStateDeletion(t *testing.T)
 	})
 	assertWorkflowPublisherRuntime(t, control, team, value.Member.PublisherIdentityId, 5, true)
 	var installedStatus bytes.Buffer
-	if err := writeSystemJobs(t.Context(), registry, &installedStatus, "tnl service status", job.ID); err != nil || !strings.Contains(installedStatus.String(), "live") {
+	if err := run(t.Context(), []string{"status", job.ID, "--state-dir", person, "--system-state-dir", supervisorRoot, "--output=human"}, &installedStatus, io.Discard); err != nil || !strings.Contains(installedStatus.String(), "live") {
 		t.Fatal("installed status retained old selector", err)
 	}
 	if f.deploymentEnrollmentRequests.Load() != 2 {

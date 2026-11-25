@@ -26,13 +26,26 @@ func ownerLock(directory string) (*os.File, error) {
 	return f, nil
 }
 
-// OwnerStopped never signals a PID or treats a temporary read failure as death.
+// OwnerStopped allows recovery after process death even without a cleanup record.
+// it never signals a PID or treats a temporary read failure as death.
 func OwnerStopped(handle string) error {
+	return ownerStopped(handle, false)
+}
+
+// OwnerJoined requires both the released lifetime lock and a clean stop record.
+func OwnerJoined(handle string) error {
+	return ownerStopped(handle, true)
+}
+
+func ownerStopped(handle string, requireRecord bool) error {
 	f, err := ownerLock(filepath.Dir(handle))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	if requireRecord {
+		return ReadStopResult(handle)
+	}
 	if _, err := os.Lstat(filepath.Join(filepath.Dir(handle), "stopped.json")); err == nil {
 		return ReadStopResult(handle)
 	} else if !errors.Is(err, os.ErrNotExist) {

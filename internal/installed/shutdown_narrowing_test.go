@@ -38,7 +38,8 @@ func TestInstalledEngineLateParentDeadlineBoundsAlreadyDrainingJob(t *testing.T)
 			synctest.Test(t, func(t *testing.T) {
 				registry := userRegistry(t)
 				job, _, _ := kindFixture(t, KindConnector)
-				if err := registry.InstallConnector(t.Context(), job); err != nil {
+				job, err := registry.InstallConnector(t.Context(), job)
+				if err != nil {
 					t.Fatal(err)
 				}
 				type drain struct {

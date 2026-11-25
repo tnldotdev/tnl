@@ -74,7 +74,7 @@ func ValidateBackground(flags BackgroundOptions, selection EnrolledSelection, ba
 	return nil
 }
 
-// runEnrolledBackgroundPublish stages one exact grant, then hands its private
+// InstallEnrolled stages one exact grant, then hands its private
 // credential to the shared installer. no operator session reaches the service.
 func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection EnrolledSelection, background BackgroundSettings, options installedjobs.ServiceOptions, presentation setup.Presentation, input io.Reader, executor installedjobs.Executor) error {
 	if selection.PublisherCredentialFile != "" {
@@ -136,20 +136,14 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 	}
 	flags.StateDir = root
 	digest := sha256.Sum256([]byte(options.Root))
-	registry, err := installedjobs.Open(ctx, installedjobs.OpenOptions{Root: filepath.Join(root, "publisher-install-"+hex.EncodeToString(digest[:12])), User: true})
+	// keep the existing enrollment journal, not its obsolete staged job catalog.
+	// only the destination supervisor allocates an installed job ID.
+	journal, err := clientstate.OpenWithOptions(ctx, filepath.Join(root, "publisher-install-"+hex.EncodeToString(digest[:12])), clientstate.OpenOptions{Protection: clientstate.ProtectionFile})
 	if err != nil {
 		return err
 	}
-	defer registry.Close()
-	var id string
-	if err := InstallBackgroundJob(ctx, registry, flags, selection, background, input, installedjobs.Clients, &id); err != nil {
-		return err
-	}
-	job, err := registry.ResolveJob(ctx, id)
-	if err != nil {
-		return err
-	}
-	credential, err := registry.Credential(ctx, job)
+	defer journal.Close()
+	payload, err := PrepareBackgroundInstallation(ctx, journal.Server, flags, selection, background, input, installedjobs.Clients)
 	if err != nil {
 		return err
 	}
@@ -158,14 +152,14 @@ func InstallEnrolled(ctx context.Context, flags BackgroundOptions, selection Enr
 		if err != nil {
 			return err
 		}
-		return setup.Register(ctx, options, setup.Installation{Job: job, Credential: credential}, executor, presentation.Jobs)
+		return setup.Register(ctx, options, payload, executor, presentation.Jobs)
 	}
-	return setup.DeliverInstallation(ctx, options, setup.Installation{Job: job, Credential: credential}, presentation)
+	return setup.DeliverInstallation(ctx, options, payload, presentation)
 }
 
-func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry, flags BackgroundOptions, selection EnrolledSelection, background BackgroundSettings, input io.Reader, clients installedjobs.ClientFactory, installedID *string) error {
+func PrepareBackgroundInstallation(ctx context.Context, journal func(context.Context, string) (*clientstate.Store, error), flags BackgroundOptions, selection EnrolledSelection, background BackgroundSettings, input io.Reader, clients installedjobs.ClientFactory) (setup.Installation, error) {
 	if err := ValidateBackground(flags, selection, background); err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	job := installedjobs.Job{TelemetryDisabled: flags.TelemetryDisabled, Kind: installedjobs.KindService, Name: background.ServiceName, Server: flags.ServerURL, Target: flags.Target, Protocol: config.ProtocolName(flags.Protocol)}
 	job.ReadinessPath = flags.ReadinessPath
@@ -173,12 +167,12 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	if flags.Service != "" {
 		effective, err := flags.Project.EffectiveService(flags.Service)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		if job.Traffic == nil {
 			job.Traffic, err = config.ResolveTrafficSelection(effective.Traffic)
 			if err != nil {
-				return err
+				return setup.Installation{}, err
 			}
 		}
 		if job.ReadinessPath == "" && effective.HTTP != nil && effective.HTTP.Readiness != nil {
@@ -189,18 +183,18 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	var err error
 	job.Server, err = clientstate.CanonicalServer(job.Server)
 	if err != nil {
-		return installedjobs.ErrScope
+		return setup.Installation{}, installedjobs.ErrScope
 	}
 	job.ServerCAPEM, err = setup.ReadTrust(background.ServerCAFile)
 	if err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	if err := installedjobs.ValidateTrust(job.ServerCAPEM); err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	control, authority, err := clients(job)
 	if err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	var native *publisheridentity.Native
 	var identity authorityv1.PublisherEnrollmentResult
@@ -211,106 +205,103 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	if flags.Service != "" && (selection.EnrollmentKey != "" || selection.PublisherIdentityID != "" || selection.PublisherCredentialFile != "") {
 		serviceScope, err = ResolveConfiguredInstallScope(ctx, flags, nil)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	}
 	if selection.EnrollmentKey == "" && selection.PublisherIdentityID == "" && selection.PublisherCredentialFile == "" {
 		native, identity, private, service, err = selectConfiguredInstalledPublisher(ctx, flags, job.Server, control.NativeControl, authority)
 		if err != nil {
-			return err
-		}
-	} else {
-		profile, err = registry.Profile(ctx, job.Server)
-		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	}
 	if selection.EnrollmentKey != "" {
+		profile, err = journal(ctx, job.Server)
+		if err != nil {
+			return setup.Installation{}, err
+		}
 		secret, err := EnrollmentKeyInput(selection.EnrollmentKey, input)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		native, identity, err = publisheridentity.EnrollNative(ctx, profile, control.NativeControl, authority, secret)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	} else if selection.PublisherIdentityID != "" {
-		// explicit IDs refer to the invoking client's profile. the setup journal
-		// is a destination for the exact grant, not a second credential search path.
+		// explicit IDs refer to the invoking client's profile, not the setup journal.
 		root, err := clientStateRoot(flags.StateDir)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		database, err := clientstate.Open(ctx, root)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		defer database.Close()
 		profile, err = database.Server(ctx, job.Server)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		native, identity, err = publisheridentity.LoadNative(ctx, profile, control.NativeControl, authority, selection.PublisherIdentityID)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	} else if selection.PublisherCredentialFile != "" {
 		f, err := credentialfile.Read(selection.PublisherCredentialFile)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		identity, private, err = f.Validate()
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		native, err = publisheridentity.LoadFile(selection.PublisherCredentialFile, job.Server, control.NativeControl, authority)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	}
 	if identity.Kind != authorityv1.Service || identity.ServiceId == nil {
-		return installedjobs.ErrScope
+		return setup.Installation{}, installedjobs.ErrScope
 	}
 	job.ServiceID = *identity.ServiceId
-	job.ID = installedjobs.ServiceJobKey(job.Server, job.ServiceID)
 	if service.Id == "" {
 		service, err = native.SavedService(ctx)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	}
 	if err := validateProfileService(service); err != nil {
-		return failure.Wrap("read service endpoint", failure.ServerResponseInvalid, err)
+		return setup.Installation{}, failure.Wrap("read service endpoint", failure.ServerResponseInvalid, err)
 	}
 	if service.Ephemeral || job.Protocol != "" && string(job.Protocol) != string(service.Protocol) || flags.Service != "" && serviceScope.Service != "" && !serviceScope.Matches(service, identity) {
-		return installedjobs.ErrScope
+		return setup.Installation{}, installedjobs.ErrScope
 	}
 	job.Protocol = config.ProtocolName(service.Protocol)
 	if flags.RequirePostQuantum != nil && *flags.RequirePostQuantum != service.RequirePostQuantum {
-		return failure.Wrap("select visitor TLS policy", failure.PublisherGrantMismatch, errors.New("saved service post-quantum requirement differs; update it with a manager sign-in"))
+		return setup.Installation{}, failure.Wrap("select visitor TLS policy", failure.PublisherGrantMismatch, errors.New("saved service post-quantum requirement differs; update it with a manager sign-in"))
 	}
 	job.Trust, err = publisheridentity.ServiceTrust(service)
 	if err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	if flags.Service != "" || flags.TargetTLS != nil || flags.TargetTLSName != "" || flags.TargetCAFile != "" {
 		job.Trust, err = CaptureServiceTargetTrust(ctx, flags.ServiceOptions, service.Protocol, job.Target)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		if err := publisheridentity.MatchServiceDeclaration(service, string(job.Protocol), job.Trust); err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 	}
 	if job.Protocol != config.ProtocolHTTP {
 		if job.ReadinessPath != "" {
-			return installedjobs.ErrScope
+			return setup.Installation{}, installedjobs.ErrScope
 		}
 	} else if job.Trust != nil && !strings.Contains(job.Target, "://") {
 		job.Target = "https://" + job.Target
 	}
 	if err := targetplan.PreflightPrivate(ctx, job.TargetPlan()); err != nil {
-		return err
+		return setup.Installation{}, err
 	}
 	job.TrustRevision, job.PublisherPool, job.Endpoint = service.TrustRevision, service.PublisherPool, service.Endpoint
 	if flags.Service != "" {
@@ -322,21 +313,19 @@ func InstallBackgroundJob(ctx context.Context, registry *installedjobs.Registry,
 	if private == nil {
 		saved, found, err := profile.PublisherIdentity(ctx, identity.ClientId)
 		if err != nil {
-			return err
+			return setup.Installation{}, err
 		}
 		if !found {
-			return installedjobs.ErrScope
+			return setup.Installation{}, installedjobs.ErrScope
 		}
 		private = ed25519.PrivateKey(saved.SigningKey)
 	}
 	job.PublisherIdentityID, job.GrantID = identity.ClientId, identity.GrantId
-	if err := registry.Install(ctx, job, identity, private); err != nil {
-		return err
+	credential, err := credentialfile.New(job.Server, identity, private)
+	if err != nil {
+		return setup.Installation{}, err
 	}
-	if installedID != nil {
-		*installedID = job.ID
-	}
-	return nil
+	return setup.Installation{Job: job, Credential: credential}, nil
 }
 
 // this never creates or edits a service. the project inventory only narrows

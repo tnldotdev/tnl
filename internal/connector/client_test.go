@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
 )
 
 func TestForegroundClientStartsOnceAndJoinsConnector(t *testing.T) {
@@ -25,12 +28,34 @@ func TestForegroundClientStartsOnceAndJoinsConnector(t *testing.T) {
 		}
 		<-ctx.Done()
 		joined = true
-		return ctx.Err()
+		return errors.Join(ctx.Err(), fmt.Errorf("connector stop: %w", context.Cause(ctx)))
 	})
 	var exit *ClientExit
 	data, readErr := os.ReadFile(marker)
-	if !joined || !errors.As(err, &exit) || exit.Code != 23 || string(data) != "run\n" || readErr != nil || !strings.Contains(out.String(), `"hostname":"orders.example"`) {
+	if !joined || !errors.As(err, &exit) || exit.Code != 23 || err.Error() != exit.Error() || string(data) != "run\n" || readErr != nil || !strings.Contains(out.String(), `"hostname":"orders.example"`) {
 		t.Fatalf("joined=%t, runs=%q, stdout=%q, err=%v", joined, data, out.String(), err)
+	}
+}
+
+func TestForegroundClientKeepsIndependentConnectorFailures(t *testing.T) {
+	for name, fault := range map[string]error{
+		"operation": errors.New("connector failed"),
+		"cleanup":   &connectorstream.CleanupError{Err: context.Canceled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := foregroundClient(t.Context(), "", []string{"sh", "-c", `printf result; printf diagnostic >&2; exit 23`}, nil, &stdout, &stderr, func(ctx context.Context, ready func(Profile) error) error {
+				if err := ready(Profile{}); err != nil {
+					return err
+				}
+				<-ctx.Done()
+				return fmt.Errorf("stop connector: %w", errors.Join(context.Cause(ctx), ctx.Err(), fault))
+			})
+			exit, exited := errors.AsType[*ClientExit](err)
+			if !errors.Is(err, fault) || !exited || exit.Code != 23 || stdout.String() != "result" || stderr.String() != "diagnostic" {
+				t.Fatalf("stdout=%q, stderr=%q, err=%v", stdout.String(), stderr.String(), err)
+			}
+		})
 	}
 }
 

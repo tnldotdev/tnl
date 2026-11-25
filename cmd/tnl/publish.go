@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tnldotdev/tnl/internal/client/detached"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	"golang.org/x/term"
 
 	"github.com/tnldotdev/tnl/internal/client/auth"
@@ -38,12 +38,13 @@ type publishCommand struct {
 	Enrolled                bool              `name:"enrolled" help:"Use only this target's retained publisher identity; enroll on first start with TNL_ENROLL_KEY."`
 	PublisherIdentityID     string            `name:"publisher-identity" env:"TNL_PUBLISHER_IDENTITY_ID" help:"Saved scoped publisher identity ID."`
 	PublisherCredentialFile string            `name:"publisher-credential-file" env:"TNL_PUBLISHER_CREDENTIAL_FILE" type:"path" help:"Portable scoped publisher identity file; no login session is used."`
-	Output                  publishOutputMode `name:"output" enum:"human,ndjson" default:"human" help:"Output format: ${enum}."`
+	Output                  publishOutputMode `name:"output" enum:"human,json,ndjson" default:"human" help:"Human output, a JSON background receipt, or foreground NDJSON events."`
 	Demo                    bool              `name:"demo" help:"Publish a built-in local demo; anonymous when signed in unless --anonymous=false."`
 
 	serverFromConfig  bool
 	selectedTeam      string
 	projectRoot       string
+	projectArgs       []string
 	fallbackName      string
 	demoNameFromCLI   bool
 	Service           string
@@ -68,11 +69,11 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		}
 	}
 	selection := enrolledPublishSelection{EnrollmentKey: flags.EnrollmentKey, PublisherIdentityID: flags.PublisherIdentityID, PublisherCredentialFile: flags.PublisherCredentialFile}
-	if flags.Foreground && (flags.Install || flags.Detach) {
-		return publisherCLIError("select only one of --foreground, --detach, or --install")
+	if flags.Foreground && (flags.Install || flags.Background) {
+		return publisherCLIError("select only one of --foreground, --bg, or --install")
 	}
-	if flags.Install && flags.Detach {
-		return publisherCLIError("--install and --detach cannot be combined")
+	if flags.Install && flags.Background {
+		return publisherCLIError("--install and --bg cannot be combined")
 	}
 	if !flags.Install && (flags.System || flags.ServiceName != "" || flags.SystemStateDir != "" || flags.ServerCAFile != "") {
 		return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
@@ -105,11 +106,10 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-		output.detachedCtx = ctx
 		if publicHTTP {
 			output.openURL = browserOpener(ctx, flags.Open, true)
 		} else {
-			output.connectCommand = publishedConnectCommand(ctx, flags, selected.service, true)
+			output.connectCommand = publishedConnectArgs(ctx, flags, selected.service, true)
 		}
 		defer func() { result = output.finish(ctx, result) }()
 		return runNamedPublish(ctx, selected, flags.StateDir, output)
@@ -130,7 +130,7 @@ func runPublish(ctx context.Context, flags publishCommand, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	output.detachedCtx = ctx
+	output.jobContext = ctx
 	defer func() { result = output.finish(ctx, result) }()
 	if credentialOwned {
 		return runEnrolledPublish(ctx, flags, selection, output, os.Stdin)
@@ -212,6 +212,7 @@ func (a *commandApp) newPublishCommand() *cobra.Command {
 	a.leaf(cPublish, &f.Publish, func(call commandCall) error {
 		return a.publish(call)
 	})
+	registerBackgroundFlag(cPublish)
 	limits := applicationlimits.Limits{}
 	cPublish.Flags().Lookup("concurrency").Usage += fmt.Sprintf(" Defaults to %d for HTTP and %d for TCP.", limits.Defaults(false).Concurrency, limits.Defaults(true).Concurrency)
 	return cPublish
@@ -219,39 +220,30 @@ func (a *commandApp) newPublishCommand() *cobra.Command {
 
 func (a *commandApp) publish(call commandCall) error {
 	ctx, flags := call.ctx, a.flags
-	flags.Publish.configArgs = configArgs(flags.NoConfig, flags.ConfigPath)
-	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Detach) {
-		return publisherCLIError("select only one of --foreground, --detach, or --install")
+	flags.Publish.projectArgs = scopedConfigArgv(*flags)
+	if flags.Publish.Foreground && (flags.Publish.Install || flags.Publish.Background) {
+		return publisherCLIError("select only one of --foreground, --bg, or --install")
 	}
-	if flags.Publish.Detach && flags.Publish.Install {
-		return publisherCLIError("--install and --detach cannot be combined")
+	if flags.Publish.Background && flags.Publish.Install {
+		return publisherCLIError("--install and --bg cannot be combined")
 	}
 	if flags.Publish.Install && flags.Publish.Output != publishOutputHuman {
 		return publishOutputModeError("--install")
 	}
-	if flags.Publish.Detach {
+	if flags.Publish.Background {
 		if flags.Publish.EnrollmentKey == "-" {
-			return publisherCLIError("--detach cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
+			return publisherCLIError("--bg cannot read an enrollment key from stdin; use --publisher-identity or --publisher-credential-file")
 		}
-		if flags.Publish.Output != "human" {
-			return publishOutputModeError("--detach")
+		if flags.Publish.Output == publishOutputNDJSON {
+			return &commandGuidance{error: publisherCLIError("background output"), message: "--bg supports --output human or json. Use NDJSON in the foreground."}
 		}
 		if flags.Publish.System || flags.Publish.ServiceName != "" || flags.Publish.SystemStateDir != "" || flags.Publish.ServerCAFile != "" {
 			return publisherCLIError("--system, --service-name, --system-state-dir, and --server-ca-file require --install")
 		}
-		return detachPublish(ctx, a.argv, flags.Publish.StateDir, a.out, nil)
+		return a.launchBackground(call, background.KindPublish, flags.Publish.StateDir, flags.Publish.Output == publishOutputJSON)
 	}
-	if flags.Publish.DetachedChild != "" {
-		root, err := clientStateRoot(flags.Publish.StateDir)
-		if err != nil {
-			return err
-		}
-		var cleanup func()
-		ctx, cleanup, err = detached.Serve(ctx, root, flags.Publish.DetachedChild)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
+	if flags.Publish.Output == publishOutputJSON {
+		return &commandGuidance{error: publisherCLIError("foreground output"), message: "Foreground publish supports --output human or ndjson. Use --bg for a JSON receipt."}
 	}
 	if flags.Publish.Demo {
 		if err := prepareDemoPublish(&flags.Publish, flags.ConfigPath, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {

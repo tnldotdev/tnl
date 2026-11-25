@@ -69,7 +69,7 @@ func helpExamples(cmd *cobra.Command, view helpView) string {
 			examples = publishStartExamples
 		}
 		if view.audience == helpAgent {
-			examples = leadHelpExample(examples, publishStreamExample)
+			examples = leadHelpExample(examples, publishReceiptExample)
 		}
 		return formatExamples(examples)
 	}
@@ -86,10 +86,12 @@ func leadHelpExample(examples []clientExample, first clientExample) []clientExam
 
 var rootGuideExample = clientExample{".", "Get automation recipes for this version of tnl.", "agent-guide"}
 var publishStreamExample = clientExample{"publish", "Read url from the ready event on stdout. Keep tnl running to serve the URL.", "publish 3000 --output ndjson"}
+var publishReceiptExample = clientExample{"publish", "Read one JSON result. Return url and keep job_id for tnl stop.", "publish 3000 --bg --output json"}
 
 var publishStartExamples = []clientExample{
 	{"., publish", "Give the app on port 3000 an HTTPS URL.", "publish 3000"},
-	{"publish, detached", "Keep a tunnel running after the terminal closes.", "publish 3000 --detach"},
+	{"publish", "Keep a tunnel running after the terminal closes.", "publish 3000 --bg"},
+	publishReceiptExample,
 	publishStreamExample,
 }
 
@@ -111,9 +113,7 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"connect, connect start", "Pass a query to psql after the double dash.", `connect orders --deployment production --client psql -- -c "select 1"`},
 	{"connect start", "Use an explicit local port for a configured service.", "connect start orders --listen 127.0.0.1:15432"},
 	{"connect start", "Connect to a service whose name is also a command.", "connect start list"},
-	{"connect list", "See installed connectors and their local ports.", "connect list"},
-	{"connect stop", "Stop the installed orders connector.", "connect stop orders"},
-	{"connect remove", "Remove the orders connector and its port assignment.", "connect remove orders"},
+	{"connect, connect start", "Start an orders connector and return its job ID and connection settings.", "connect orders --deployment production --bg --output json"},
 
 	{"auth, auth login", "Open the approval URL and copy the code.", "auth login --open --copy-code"},
 	{"auth, auth status", "Check your credentials with the server.", "auth status --check"},
@@ -229,14 +229,12 @@ var clientHelpExamples = examplePages(slices.Concat(publishStartExamples, []clie
 	{"publisher grant, publisher grant add", "Let a publisher serve one exact hostname.", `publisher grant add "$PUBLISHER_ID" --url app.tnl.example.com`},
 	{"publisher grant revoke", "Revoke one grant from tnl publisher list.", `publisher grant revoke "$PUBLISHER_ID" "$GRANT_ID"`},
 	{"endpoint, endpoint release", "After disabling public access, release the reserved port.", `endpoint release "$SERVICE_ID" --port 15443`},
-	{"service, service list", "Find the names and state of installed publications.", "service list"},
+	{"service, status", "Find running background jobs and installed jobs.", "status --bg"},
 	{"service install", "Install the local supervisor for your user account.", "service install"},
-	{"service start", "Start the installed publication named app.", "service start app"},
-	{"service stop", "Stop app while keeping its installation.", "service stop app"},
-	{"service remove", "Remove app after stopping it.", "service remove app"},
-	{"service status", "Inspect the installed publication named app.", "service status app"},
-	{"detached, detached list", "Find the ID of a detached tunnel.", "detached list"},
-	{"detached stop", "Stop the tunnel with an ID from tnl detached list.", `detached stop "$DETACHED_ID"`},
+	{"service start", "Restart an installed job by ID.", `service start "$JOB_ID"`},
+	{"service remove", "Remove an installed job and its local resources.", `service remove "$JOB_ID"`},
+	{"status", "Inspect one job by ID.", `status "$JOB_ID"`},
+	{"stop", "Stop only the job with this ID.", `stop "$JOB_ID"`},
 
 	{"admin, admin server, admin server status", "See the server's service counts and process leases.", "admin server status"},
 	{"admin, admin relays, admin relays list", "Find a relay's ID, run ID, and lease revision.", "admin relays list"},

@@ -60,7 +60,7 @@ func TestFixedDeploymentsUseIdentityBindingWithoutSingleDeploymentOverrides(t *t
 	if inputs[0].job.DeploymentInstance != value.Instance || inputs[0].job.Server != value.ControlURL || inputs[0].runner.Deployment != nil {
 		t.Fatal("fixed deployment did not retain exact identity scope")
 	}
-	for _, modify := range []func(*publisherServeCommand){func(f *publisherServeCommand) { f.Deployment = "production" }, func(f *publisherServeCommand) { f.Team = "another" }, func(f *publisherServeCommand) { f.EnrollmentKey = "secret" }, func(f *publisherServeCommand) { f.Detach = true }} {
+	for _, modify := range []func(*publisherServeCommand){func(f *publisherServeCommand) { f.Deployment = "production" }, func(f *publisherServeCommand) { f.Team = "another" }, func(f *publisherServeCommand) { f.EnrollmentKey = "secret" }, func(f *publisherServeCommand) { f.Background = true }} {
 		invalid := flags
 		modify(&invalid)
 		if err := validateFixedDeploymentRuntime(invalid); err == nil {

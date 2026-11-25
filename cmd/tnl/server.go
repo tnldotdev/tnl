@@ -61,6 +61,24 @@ func scopedConfigArgs(flags cli) string {
 	return prefix + configArgs(flags.NoConfig, flags.ConfigPath)
 }
 
+func configArgv(noConfig bool, path string) []string {
+	if noConfig {
+		return []string{"--no-config"}
+	}
+	if path != "" {
+		return []string{"--config", path}
+	}
+	return nil
+}
+
+func scopedConfigArgv(flags cli) []string {
+	path := flags.ConfigPath
+	if path == "" && flags.Cwd != "" {
+		path = os.Getenv("TNL_CONFIG")
+	}
+	return append(checkoutFlags(flags.Cwd), configArgv(flags.NoConfig, path)...)
+}
+
 func resolveServer(ctx context.Context, root, value string) (string, *clientstate.Database, error) {
 	return clientserver.Open(ctx, root, value)
 }

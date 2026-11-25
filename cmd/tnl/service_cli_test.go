@@ -17,13 +17,13 @@ import (
 )
 
 func TestSystemServiceCommandWiring(t *testing.T) {
-	for _, command := range []string{"install", "start", "stop", "remove", "list", "serve"} {
+	for _, command := range []string{"install", "start", "remove", "serve", "register"} {
 		t.Run(command, func(t *testing.T) {
 			var root cli
 			parser := commandForTest(&root, io.Discard)
 			args := []string{"service", command}
-			if command == "start" || command == "stop" || command == "remove" {
-				args = append(args, "database")
+			if command == "start" || command == "remove" {
+				args = append(args, testExactJobID)
 			}
 			args = append(args, "--system-state-dir", "/private/system-publisher")
 			parsed, err := parser(args)
@@ -31,13 +31,13 @@ func TestSystemServiceCommandWiring(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := "service " + command
-			if command == "start" || command == "stop" || command == "remove" {
-				want += " <job>"
+			if command == "start" || command == "remove" {
+				want += " <job-id>"
 			}
 			if commandID(parsed) != want {
 				t.Fatalf("parent dispatch path: %s, want %s", commandID(parsed), want)
 			}
-			if command == "start" && root.Service.Start.Job != "database" || command == "stop" && root.Service.Stop.Job != "database" {
+			if command == "start" && root.Service.Start.Job != testExactJobID || command == "remove" && root.Service.Remove.Job != testExactJobID {
 				t.Fatal("job selection was lost")
 			}
 			if command == "serve" {
@@ -93,6 +93,7 @@ func TestUserHomeFailureNeverFallsBackToSystemState(t *testing.T) {
 	serviceUserRoot = func(string) (string, error) { return "", errors.New("home unavailable") }
 	t.Cleanup(func() { serviceUserRoot = previous })
 	flags := systemStateFlags{}
+	state := filepath.Join(t.TempDir(), "missing-state")
 	if _, err := flags.root(); err == nil {
 		t.Fatal("missing home silently selected a default state root")
 	}
@@ -107,11 +108,18 @@ func TestUserHomeFailureNeverFallsBackToSystemState(t *testing.T) {
 		t.Fatalf("missing home has no typed failure: %v", err)
 	}
 	for name, run := range map[string]func() error{
-		"start":  func() error { return runServiceStart(t.Context(), serviceJobCommand{Job: "one"}, io.Discard, nil) },
-		"stop":   func() error { return runServiceStop(t.Context(), serviceJobCommand{Job: "one"}, io.Discard) },
-		"remove": func() error { return runServiceRemove(t.Context(), serviceJobCommand{Job: "one"}, io.Discard) },
-		"list":   func() error { return runServiceList(t.Context(), serviceListCommand{}, io.Discard) },
-		"serve":  func() error { return runServiceServe(t.Context(), serviceServeCommand{}) },
+		"start": func() error {
+			return runServiceStart(t.Context(), serviceJobCommand{Job: testExactJobID}, io.Discard, nil)
+		},
+		"stop": func() error {
+			return runStopJob(t.Context(), stopCommand{JobID: testExactJobID, StateDir: state}, io.Discard)
+		},
+		"remove": func() error { return runServiceRemove(t.Context(), serviceJobCommand{Job: testExactJobID}, io.Discard) },
+		"list":   func() error { return runJobStatus(t.Context(), jobStatusOptions{StateDir: state}, io.Discard) },
+		"show": func() error {
+			return runJobStatus(t.Context(), jobStatusOptions{StateDir: state, JobID: testExactJobID}, io.Discard)
+		},
+		"serve": func() error { return runServiceServe(t.Context(), serviceServeCommand{}) },
 		"publish install": func() error {
 			return runEnrolledBackgroundPublish(t.Context(), publishCommand{}, enrolledPublishSelection{PublisherCredentialFile: filepath.Join(t.TempDir(), "missing")}, backgroundPublishFlags{}, io.Discard, strings.NewReader(""), nil)
 		},
@@ -189,19 +197,21 @@ func (f testServiceRunner) Serve(ctx context.Context, _ func() time.Time, _ cont
 }
 
 func TestSystemServiceNativeStateOutput(t *testing.T) {
-	job := installedjobs.Job{Kind: installedjobs.KindService, ID: "service-012345", Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", ServiceID: "svc_selected", Target: "private-target-secret", Protocol: "postgres", Trust: &targettrust.Snapshot{PEM: []byte("trust-secret")}, Enabled: true, Status: installedjobs.Status{State: "ready", RunNumber: 42, Address: "orders.example:25443"}}
-	var output bytes.Buffer
-	if err := renderSystemJobs(&output, "tnl service list", []installedjobs.Job{job}, ""); err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{"orders", "service-012345", "ready", "orders.example:25443"} {
-		if !strings.Contains(output.String(), expected) {
-			t.Fatalf("publication field missing: %s", expected)
+	job := installedjobs.Job{Kind: installedjobs.KindService, ID: testExactJobID, Name: "orders", Server: "https://control.example", PublisherIdentityID: "pub_selected", ServiceID: "svc_selected", Target: "private-target-secret", Protocol: "postgres", Trust: &targettrust.Snapshot{PEM: []byte("trust-secret")}, Enabled: true, Status: installedjobs.Status{State: "ready", RunNumber: 42, Address: "orders.example:25443"}}
+	for _, mode := range []statusOutputMode{statusOutputHuman, statusOutputJSON} {
+		var output bytes.Buffer
+		if err := writeJobList(&output, mode, []jobStatus{installedJobStatus(job, true)}); err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, hidden := range []string{"secret", "pub_selected", "service run"} {
-		if strings.Contains(output.String(), hidden) {
-			t.Fatalf("unexpected field %q in list: %s", hidden, output.String())
+		for _, expected := range []string{"orders", testExactJobID, "ready", "orders.example:25443"} {
+			if !strings.Contains(output.String(), expected) {
+				t.Fatalf("publication field missing: %s", expected)
+			}
+		}
+		for _, hidden := range []string{"secret", "pub_selected", "service run", "run_number"} {
+			if strings.Contains(output.String(), hidden) {
+				t.Fatalf("unexpected field %q in list: %s", hidden, output.String())
+			}
 		}
 	}
 }
@@ -209,11 +219,11 @@ func TestSystemServiceNativeStateOutput(t *testing.T) {
 func TestSystemServiceHTTPAndConnectorUseServiceIdentity(t *testing.T) {
 	for _, kind := range []installedjobs.Kind{installedjobs.KindService, installedjobs.KindConnector} {
 		t.Run(string(kind), func(t *testing.T) {
-			job := installedjobs.Job{Kind: kind, ID: "selected", Name: "web", ServiceID: "svc_web", Protocol: "http",
+			job := installedjobs.Job{Kind: kind, ID: testExactJobID, Name: "web", ServiceID: "svc_web", Protocol: "http", Enabled: true,
 				Server: "https://control.example", PublisherIdentityID: "pub_web", Target: "127.0.0.1:23080",
 				Status: installedjobs.Status{State: installedjobs.JobReady, RunNumber: 3, Address: "https://web.example"}}
 			var output bytes.Buffer
-			if err := renderSystemJobs(&output, "tnl service status", []installedjobs.Job{job}, job.ID); err != nil {
+			if err := writeSelectedJobStatus(&output, statusOutputHuman, installedJobStatus(job, false)); err != nil {
 				t.Fatal(err)
 			}
 			for _, expected := range []string{"service ID", "svc_web", "http"} {

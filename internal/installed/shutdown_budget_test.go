@@ -21,8 +21,8 @@ func TestInstalledShutdownSharesDeadlineAcrossJobsAndJoinsFailures(t *testing.T)
 	defer registry.Close()
 	for _, name := range []string{"api", "web"} {
 		job, _, _ := kindFixture(t, KindConnector)
-		job.ID = name
-		if err := registry.InstallConnector(t.Context(), job); err != nil {
+		job.Name = name
+		if _, err := registry.InstallConnector(t.Context(), job); err != nil {
 			t.Fatal(err)
 		}
 	}

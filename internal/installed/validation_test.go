@@ -50,11 +50,14 @@ func installKind(t *testing.T, registry *Registry, kind Kind, job Job, identity 
 	t.Helper()
 	switch kind {
 	case KindDeployment:
-		return registry.InstallDeployment(t.Context(), job, *job.DeploymentMember, key)
+		_, err := registry.InstallDeployment(t.Context(), job, *job.DeploymentMember, key)
+		return err
 	case KindConnector:
-		return registry.InstallConnector(t.Context(), job)
+		_, err := registry.InstallConnector(t.Context(), job)
+		return err
 	default:
-		return registry.Install(t.Context(), job, identity, key)
+		_, err := registry.Install(t.Context(), job, identity, key)
+		return err
 	}
 }
 
@@ -193,7 +196,8 @@ func TestPublisherInstallCannotAcceptSupervisorOnlyKinds(t *testing.T) {
 			job, identity, key := kindFixture(t, kind)
 			identity.Kind, identity.ClientId, identity.GrantId = authorityv1.Service, job.PublisherIdentityID, job.GrantID
 			identity.ServiceId = &job.ServiceID
-			requireScopeFailure(t, registry.Install(t.Context(), job, identity, key))
+			_, err := registry.Install(t.Context(), job, identity, key)
+			requireScopeFailure(t, err)
 		})
 	}
 }
@@ -209,7 +213,8 @@ func TestPublisherInstallationRejectsMixedGrantMetadata(t *testing.T) {
 		} {
 			changed := identity
 			mutate(&changed)
-			requireScopeFailure(t, registry.Install(t.Context(), job, changed, key))
+			_, err := registry.Install(t.Context(), job, changed, key)
+			requireScopeFailure(t, err)
 		}
 	}
 }

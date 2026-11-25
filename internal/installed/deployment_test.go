@@ -37,9 +37,13 @@ func TestInstalledDeploymentTasksKeepIndependentProtectedKeys(t *testing.T) {
 			t.Fatal(err)
 		}
 		member := controlv1.DeploymentPublisherIdentity{TeamId: team, ProjectKey: "project-one", DeploymentName: "cluster", DeploymentId: deploymentID, PublisherIdentityId: newID(opaqueid.PublisherIdentityPrefix), KeyId: newID(opaqueid.PublisherIdentityKeyPrefix)}
-		job := Job{Kind: KindDeployment, ID: JobKey("https://control.example", "deployment", deploymentID+":"+name), Name: "cluster-" + name, Server: "https://control.example", PublisherIdentityID: member.PublisherIdentityId, DeploymentMember: &member, DeploymentInstance: name}
-		if err := registry.InstallDeployment(t.Context(), job, member, key); err != nil {
+		job := Job{Kind: KindDeployment, Name: "cluster-" + name, Server: "https://control.example", PublisherIdentityID: member.PublisherIdentityId, DeploymentMember: &member, DeploymentInstance: name}
+		job, err = registry.InstallDeployment(t.Context(), job, member, key)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if !opaqueid.Valid(job.ID, opaqueid.JobPrefix) || len(jobs) > 0 && job.ID == jobs[0].ID {
+			t.Fatal("installed deployment did not get its own public job ID")
 		}
 		jobs = append(jobs, job)
 		keys = append(keys, key)
@@ -60,7 +64,8 @@ func TestInstalledDeploymentTasksKeepIndependentProtectedKeys(t *testing.T) {
 		if job.Project != nil || job.StateDir != "" {
 			t.Fatal("installed deployment task depends on a person's project or state directory")
 		}
-		if err := registry.InstallDeployment(t.Context(), job, member, keys[1-index]); !errors.Is(err, ErrScope) {
+		job.ID = ""
+		if _, err := registry.InstallDeployment(t.Context(), job, member, keys[1-index]); !errors.Is(err, ErrScope) {
 			t.Fatalf("installed deployment task replaced its key: %v", err)
 		}
 	}
@@ -75,7 +80,8 @@ func TestInstalledDeploymentIdentitySurvivesRuntimeDatabaseDeletion(t *testing.T
 	}
 	job, _, private := kindFixture(t, KindDeployment)
 	job.IdentityDir = filepath.Join(t.TempDir(), "identity")
-	if err := registry.InstallDeployment(t.Context(), job, *job.DeploymentMember, private); err != nil {
+	job, err = registry.InstallDeployment(t.Context(), job, *job.DeploymentMember, private)
+	if err != nil {
 		t.Fatal(err)
 	}
 	profile, err := registry.Profile(t.Context(), job.Server)
@@ -101,14 +107,17 @@ func TestInstalledDeploymentIdentitySurvivesRuntimeDatabaseDeletion(t *testing.T
 	if err != nil || pathErr != nil || member != *job.DeploymentMember || !bytes.Equal(restored, private) || profile.IdentityDirectory() != canonical {
 		t.Fatal("fresh runtime lost its installed filesystem identity", err)
 	}
-	if err := registry.InstallDeployment(t.Context(), job, member, private); err != nil {
+	deletedID := job.ID
+	job.ID = ""
+	installed, err := registry.InstallDeployment(t.Context(), job, member, private)
+	if err != nil || installed.ID == deletedID {
 		t.Fatal("reinstall could not reuse the durable key", err)
 	}
-	oldJob := job
+	oldJob := installed
 	member.DeploymentName = "renamed"
 	job.DeploymentMember = &member
 	job.Name = "renamed-" + job.DeploymentInstance
-	if err := registry.InstallDeployment(t.Context(), job, member, private); err != nil {
+	if renamed, err := registry.InstallDeployment(t.Context(), job, member, private); err != nil || renamed.ID != installed.ID {
 		t.Fatal("selector rename replaced installed identity", err)
 	}
 	current, key, _, err := registry.DeploymentIdentity(t.Context(), oldJob)

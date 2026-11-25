@@ -92,7 +92,7 @@ func InstallPublication(ctx context.Context, selected Publication, presentation 
 		return err
 	}
 	job := selected.Job
-	job.Kind, job.ID, job.Server, job.ServiceID = installedjobs.KindService, installedjobs.ServiceJobKey(server, service.Id), server, service.Id
+	job.Kind, job.Server, job.ServiceID = installedjobs.KindService, server, service.Id
 	job.PublisherIdentityID, job.GrantID = credential.PublisherIdentityID, credential.GrantID
 	job.TrustRevision, job.PublisherPool, job.Endpoint = service.TrustRevision, service.PublisherPool, service.Endpoint
 	job.ServerCAPEM = serverCA
@@ -175,7 +175,7 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 		return err
 	}
 	job := payload.Job
-	if payload.Credential.ControlURL != job.Server || job.PublisherIdentityID != identity.ClientId || job.GrantID != identity.GrantId {
+	if job.ID != "" || payload.Credential.ControlURL != job.Server || job.PublisherIdentityID != identity.ClientId || job.GrantID != identity.GrantId {
 		return installedjobs.ErrScope
 	}
 	control, authority, err := installedjobs.Clients(job)
@@ -188,7 +188,7 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 	}
 	switch job.Kind {
 	case installedjobs.KindService:
-		if identity.ServiceId == nil || *identity.ServiceId != job.ServiceID || job.ID != installedjobs.ServiceJobKey(job.Server, job.ServiceID) {
+		if identity.ServiceId == nil || *identity.ServiceId != job.ServiceID {
 			return installedjobs.ErrScope
 		}
 		service, err := native.SavedService(ctx)
@@ -213,7 +213,8 @@ func Register(ctx context.Context, options installedjobs.ServiceOptions, payload
 		return err
 	}
 	defer registry.Close()
-	if err := registry.Install(ctx, job, identity, private); err != nil {
+	job, err = registry.Install(ctx, job, identity, private)
+	if err != nil {
 		return err
 	}
 	// desired state and the scoped key are durable before the supervisor starts.

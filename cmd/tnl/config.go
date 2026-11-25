@@ -186,7 +186,7 @@ func (c projectConfiguration) applyInstalledService(flags *publishCommand) error
 		return err
 	}
 	if flags.ServiceName != "" && flags.ServiceName != service {
-		return publisherCLIError("--service-name must match the configured service; use its name with tnl service start, stop, and remove")
+		return publisherCLIError("--service-name must match the configured service")
 	}
 	flags.Service, flags.project, flags.projectRoot = service, c, c.Root
 	if !flags.inspectionModeFromCLI {

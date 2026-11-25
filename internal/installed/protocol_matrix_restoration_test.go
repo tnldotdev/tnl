@@ -79,8 +79,10 @@ func TestInstalledProtocolMatrixRestorationRejectsUnknownJobKinds(t *testing.T) 
 			job.Kind, job.Protocol = kind, "kubernetes"
 			job.Target = "https://127.0.0.1:6443"
 			job.Trust = capturedTrust(t, "cluster.example", nil)
-			requireScopeFailure(t, registry.Install(t.Context(), job, identity, key))
-			requireScopeFailure(t, registry.InstallConnector(t.Context(), job))
+			_, err := registry.Install(t.Context(), job, identity, key)
+			requireScopeFailure(t, err)
+			_, err = registry.InstallConnector(t.Context(), job)
+			requireScopeFailure(t, err)
 			if jobs, err := registry.List(t.Context()); err != nil || len(jobs) != 0 {
 				t.Fatal("unknown job kind wrote installed state", jobs, err)
 			}

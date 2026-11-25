@@ -29,8 +29,8 @@ func writeConnectorReady(output io.Writer, profile connector.Profile, mode statu
 		blocks = append(blocks, clioutput.Literal(profile.URL))
 	}
 	lifetime := "Ctrl+C to stop."
-	if profile.DetachedID != "" {
-		lifetime = "Running detached."
+	if profile.JobID != "" && !installed {
+		lifetime = "Running in the background."
 	} else if installed {
 		lifetime = "Installed; running in the background."
 	}
@@ -58,9 +58,6 @@ func writeConnectorReady(output io.Writer, profile connector.Profile, mode statu
 		if kube.Qualified {
 			blocks = append(blocks, clioutput.Text("The context name includes a suffix because the original name is in use."))
 		}
-	}
-	if profile.DetachedID != "" {
-		blocks = append(blocks, clioutput.Text("To stop:"), clioutput.Literal(detachedStopCommandLine(profile.DetachedID, stateDir)))
 	}
 	return writeResult(output, blocks...)
 }

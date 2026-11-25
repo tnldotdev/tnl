@@ -117,7 +117,7 @@ func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 		p.heading("Output and readiness")
 		p.prose("A foreground tunnel stays attached until stopped. Human lifecycle messages go to stderr. With --output ndjson, read events from stdout instead.", "  ", "  ")
 		p.prose("A ready event means the tunnel can receive visitors. It does not grant anonymous access or prove your app returned HTTP 200.", "  ", "  ")
-		p.prose("Use only one of --foreground, --detach, or --install. With --detach, tnl exits after the tunnel is ready and prints a stop command. --detach and --install require human output.", "  ", "  ")
+		p.prose("Choose one of --foreground, --bg, or --install. --background is the same as --bg. With --bg, tnl exits when the tunnel is ready. Human output prints the URL and a stop command on separate streams; --output json returns one receipt.", "  ", "  ")
 	}
 
 	commands := make(map[string][]helpRow)
@@ -164,7 +164,7 @@ func clientHelp(cmd *cobra.Command, width int, view helpView) string {
 
 func publishQuickFlag(cmd *cobra.Command, f *pflag.Flag) bool {
 	switch f.Name {
-	case "demo", "open", "foreground", "detach", "install", "output":
+	case "demo", "open", "foreground", "bg", "background", "install", "output":
 		return true
 	}
 	return flagGroup(cmd, f) == "Global flags"
@@ -336,7 +336,7 @@ func flagGroup(cmd *cobra.Command, f *pflag.Flag) string {
 		switch f.Name {
 		case "output":
 			return "Output"
-		case "foreground", "detach", "install", "system", "system-state-dir", "server-ca-file", "service-name":
+		case "foreground", "bg", "background", "install", "system", "system-state-dir", "server-ca-file", "service-name":
 			return "Run mode"
 		case "enroll-key", "enrolled", "identity-file", "identity-dir", "binding-file", "publisher-credential-file", "publisher-identity":
 			return "Publisher credentials"

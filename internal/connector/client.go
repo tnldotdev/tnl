@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tnldotdev/tnl/internal/failure"
+	connectorstream "github.com/tnldotdev/tnl/internal/connector/stream"
+	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 )
 
 func ClientNames(protocol string) []string {
@@ -94,10 +96,31 @@ func foregroundClient(parent context.Context, client string, args []string, stdi
 	serveErr := serve(ctx, ready)
 	stop(nil)
 	child.Wait()
-	if context.Cause(ctx) == childDone && (failure.Only(serveErr, context.Canceled) || failure.Only(serveErr, childDone)) {
+	if context.Cause(ctx) == childDone && clientStopOnly(serveErr, childDone) {
 		serveErr = nil
 	}
 	return errors.Join(serveErr, childErr)
+}
+
+// the connector may report the stop as both ctx.Err() and context.Cause().
+// discard only a tree of expected stops, not a failure joined with the stop.
+func clientStopOnly(err, cause error) bool {
+	switch wrapped := err.(type) {
+	case *connectorstream.CleanupError, *tunnel.SessionCleanupError, *muxsession.QUICTransportCloseError:
+		return false
+	case interface{ Unwrap() []error }:
+		children := wrapped.Unwrap()
+		for _, child := range children {
+			if !clientStopOnly(child, cause) {
+				return false
+			}
+		}
+		return len(children) != 0
+	case interface{ Unwrap() error }:
+		return clientStopOnly(wrapped.Unwrap(), cause)
+	default:
+		return err == context.Canceled || err == cause
+	}
 }
 
 const clientStopGrace = 2 * time.Second

@@ -22,11 +22,12 @@ func TestServicePublisherRejectsDifferentGrantScope(t *testing.T) {
 	job.Kind, job.ServiceID = KindService, service
 	job.TrustRevision = 1
 	job.Protocol, job.Target = "tcp", "127.0.0.1:22"
-	if err := r.Install(t.Context(), job, identity, key); !errors.Is(err, ErrScope) {
+	if _, err := r.Install(t.Context(), job, identity, key); !errors.Is(err, ErrScope) {
 		t.Fatalf("namespace grant installed for service: %v", err)
 	}
 	identity.Kind, identity.ServiceId = authorityv1.Service, &service
-	if err := r.Install(t.Context(), job, identity, key); err != nil {
+	job, err = r.Install(t.Context(), job, identity, key)
+	if err != nil {
 		t.Fatal(err)
 	}
 	loaded, _, _, err := r.signingIdentity(t.Context(), job)
@@ -51,13 +52,14 @@ func TestConnectorIsUserOnlyAndJoinsBeforeRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := Job{Kind: KindConnector, ID: "connect-test", Name: "database", Server: "https://control.example", ServiceID: service,
+	job := Job{Kind: KindConnector, Name: "database", Server: "https://control.example", ServiceID: service,
 		StateDir: t.TempDir(), Protocol: "postgres", Target: "127.0.0.1:15432", TrustRevision: 1}
 	job.IdentityID, err = opaqueid.New(opaqueid.IdentityPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.InstallConnector(t.Context(), job); err != nil {
+	job, err = r.InstallConnector(t.Context(), job)
+	if err != nil {
 		t.Fatal(err)
 	}
 	started, joined := make(chan struct{}), make(chan struct{})
@@ -101,7 +103,8 @@ func TestConnectorIsUserOnlyAndJoinsBeforeRemoval(t *testing.T) {
 	}
 	joinEngine(t, cancel, done)
 	system := testRegistry(t)
-	if err := system.InstallConnector(t.Context(), job); !errors.Is(err, ErrScope) {
+	job.ID = ""
+	if _, err := system.InstallConnector(t.Context(), job); !errors.Is(err, ErrScope) {
 		t.Fatalf("system registry accepted connector: %v", err)
 	}
 }

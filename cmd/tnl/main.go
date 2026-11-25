@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tnldotdev/tnl/internal/client/auth"
 	clientauthority "github.com/tnldotdev/tnl/internal/client/authority"
+	"github.com/tnldotdev/tnl/internal/client/background"
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
 	clientstate "github.com/tnldotdev/tnl/internal/client/state"
 	clienttelemetry "github.com/tnldotdev/tnl/internal/client/telemetry"
@@ -49,8 +50,8 @@ type cli struct {
 	Publisher   publisherCommand
 	Service     serviceCommand
 	Endpoint    endpointCommand
-	Detached    detachedCommand
 	Status      statusCommand
+	Stop        stopCommand
 	Ping        pingCommand
 	Inspect     inspectCommand
 	Telemetry   telemetryCommand
@@ -165,7 +166,15 @@ func main() {
 	if err != nil {
 		code, render := terminalResult(err)
 		if render != nil {
-			writeCommandError(os.Stderr, render)
+			var receiptErr *background.ReceiptWriteError
+			if errors.As(err, &receiptErr) {
+				// stderr may share the failed descriptor. never block on a second write.
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				writeCommandError(background.ReceiptWriter(ctx, os.Stderr), render)
+				cancel()
+			} else {
+				writeCommandError(os.Stderr, render)
+			}
 		}
 		if code != 0 {
 			os.Exit(code)
@@ -432,7 +441,7 @@ func classifyCommandError(err error) error {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, factories ...telemetryFactory) (result error) {
-	a := commandApp{flags: &cli{}, out: stdout, errOut: stderr, argv: args, factories: factories}
+	a := commandApp{flags: &cli{}, out: stdout, errOut: stderr, factories: factories}
 	command := ""
 	defer func() {
 		result = classifyCommandError(result)
@@ -519,6 +528,11 @@ func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) err
 	}
 	telemetryCommand, telemetryAction, tracked := selectedTelemetryCommand(parsed)
 	serving := parsedCommand == "runtime serve" || parsedCommand == "runtime connections serve" || parsedCommand == "service serve" || parsedCommand == "publisher serve" || parsedCommand == "publish <service-or-target>" || parsedCommand == "connect start <name>"
+	launcher := flags.Publish.Background || flags.Connect.Start.Background || flags.Publisher.Serve.Background
+	if launcher {
+		// only the launched serving process opens telemetry state.
+		tracked, serving = false, false
+	}
 	root, stateErr := commandStateRoot(parsed)
 	enabled, preferenceErr := false, stateErr
 	if stateErr == nil && (tracked || serving) {
@@ -545,7 +559,7 @@ func (a *commandApp) execute(parsed *cobra.Command, handle func(commandCall) err
 	flags.Runtime.Serve.telemetry, flags.Runtime.Connections.telemetry = collector, collector
 	flags.Runtime.Connections.disabled = flags.NoTelemetry
 	failureStage := telemetryv1.Setup
-	if collector != nil && tracked && !flags.Publish.Install && !flags.Publish.Detach {
+	if collector != nil && tracked && !flags.Publish.Install {
 		defer func() {
 			outcome := result
 			if outcome == nil && ctx.Err() != nil {
@@ -593,17 +607,17 @@ func (a *commandApp) loadCommandProject(ctx context.Context, parsed *cobra.Comma
 type nativeProcessKey struct{}
 
 func persistentObservabilityOwner(command string, flags cli) bool {
-	return commandObservabilityRole(command, flags) == observability.RolePublisher || command == "runtime connections serve" || command == "connect start <name>" && !flags.Connect.Start.Detach && !flags.Connect.Start.Install
+	return commandObservabilityRole(command, flags) == observability.RolePublisher || command == "runtime connections serve" || command == "connect start <name>" && !flags.Connect.Start.Background && !flags.Connect.Start.Install
 }
 
 func commandObservabilityRole(command string, flags cli) observability.Role {
 	switch command {
 	case "publish <service-or-target>":
-		if !flags.Publish.Install && !flags.Publish.Detach {
+		if !flags.Publish.Install && !flags.Publish.Background {
 			return observability.RolePublisher
 		}
 	case "publisher serve":
-		if !flags.Publisher.Serve.Detach && !flags.Publisher.Serve.Install {
+		if !flags.Publisher.Serve.Background && !flags.Publisher.Serve.Install {
 			return observability.RolePublisher
 		}
 	case "runtime serve", "service serve":

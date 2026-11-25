@@ -33,6 +33,7 @@ const (
 	InvitationPrefix               = "ivt_"
 	InvocationPrefix               = "ivk_"
 	IssuancePrefix                 = "iss_"
+	JobPrefix                      = "job_"
 	MembershipPrefix               = "mem_"
 	ServiceCertificateWorkerPrefix = "scw_"
 	PublisherConnectionPrefix      = "pc_"

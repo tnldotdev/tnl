@@ -46,7 +46,8 @@ func TestPublishHelpViewsShareExamples(t *testing.T) {
 			text := clientHelp(publish, width, view)
 			port := strings.Index(text, "\n  tnl publish 3000\n")
 			stream := strings.Index(text, "\n  tnl publish 3000 --output ndjson\n")
-			if port < 0 || stream < 0 || (stream < port) != (view.audience == helpAgent) {
+			receipt := strings.Index(text, "\n  tnl publish 3000 --bg --output json\n")
+			if port < 0 || stream < 0 || receipt < 0 || (receipt < port) != (view.audience == helpAgent) {
 				t.Errorf("width %d, view %+v: incorrect order or missing examples:\n%s", width, view, text)
 			}
 			for _, fullOnly := range []string{"tnl publish --demo", "--target-ca-file PATH", "Output and readiness:"} {
@@ -54,7 +55,7 @@ func TestPublishHelpViewsShareExamples(t *testing.T) {
 					t.Errorf("width %d, view %+v: expected reference-only %q:\n%s", width, view, fullOnly, text)
 				}
 			}
-			if strings.Contains(text, "--bg") || strings.Contains(text, "--output json") {
+			if strings.Contains(text, "--detach") || strings.Contains(text, "tnl publish 3000 --output json") {
 				t.Errorf("width %d, view %+v: help advertised an unsupported publish form", width, view)
 			}
 		}
