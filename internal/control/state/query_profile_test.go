@@ -104,8 +104,22 @@ func TestProfileRoutingHistory(t *testing.T) {
 		p := &loadQueryPlan{DBTX: tx}
 		traced := &loadQueryTransaction{Tx: tx, plan: p}
 		session := sessions[0]
-		runs, err := controlstatedb.New(traced).ListIngressServiceRuns(t.Context(), controlstatedb.ListIngressServiceRunsParams{
+		live, err := controlstatedb.New(traced).ListLiveIngressRuns(t.Context(), controlstatedb.ListLiveIngressRunsParams{
 			IngressPoolID: PrimaryIngressPoolID, Now: timestamptz(f.now),
+		})
+		if err != nil || len(live) != len(sessions) {
+			t.Fatal("profile routing lost live candidates", err)
+		}
+		var ids []string
+		for _, run := range live {
+			if !run.ValidUntil.Time.After(f.now) {
+				t.Fatal("expired routing candidate")
+			}
+			ids = append(ids, run.ID)
+		}
+		p.explain(t)
+		runs, err := controlstatedb.New(traced).ListIngressServiceRuns(t.Context(), controlstatedb.ListIngressServiceRunsParams{
+			RunIds: ids, Now: timestamptz(f.now),
 		})
 		if err != nil || len(runs) != len(sessions) {
 			_ = tx.Rollback(t.Context())
@@ -113,8 +127,8 @@ func TestProfileRoutingHistory(t *testing.T) {
 		}
 		found := false
 		for _, run := range runs {
-			if run.ControlService.ID == session.service.ID && run.ControlServiceRun.ID == session.run.RunID &&
-				run.ControlServiceRun.RunNumber == session.run.RunNumber && run.ValidUntil.Time.After(f.now) {
+			if run.ServiceID == session.service.ID && run.RunID == session.run.RunID &&
+				run.RunNumber == session.run.RunNumber {
 				found = true
 			}
 		}

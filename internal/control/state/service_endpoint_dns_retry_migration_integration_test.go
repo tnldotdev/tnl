@@ -12,11 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
 )
 
 func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
-	for _, prior := range []int64{1, 2, 3} {
+	for _, prior := range []int64{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("from-v%d", prior), func(t *testing.T) {
 			checkPopulatedDNSSchemaUpgrade(t, prior)
 		})
@@ -128,6 +129,12 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 			t.Fatal(err)
 		}
 	}
+	if priorVersion >= 4 {
+		// the v4 runtime inherited select alone on the change records.
+		if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf(`REVOKE INSERT,UPDATE,DELETE ON control.read_dependency_versions FROM %s`, pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize())); err != nil {
+			t.Fatal(err)
+		}
+	}
 	runtime, err := pgxpool.New(ctx, runtimeURL)
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +205,19 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	defer reopened.Close()
 	if err := reopened.Readiness(ctx); err != nil {
 		t.Fatal(err)
+	}
+	// an old writer still updates through the new triggers; a reopened runtime
+	// can run the new projection with its existing table grants.
+	if _, err := runtime.Exec(ctx, `UPDATE control.publisher_grants SET expires_at=$1 WHERE id='grant'`, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=(hashtext('grant')&255))`).Scan(&recorded); err != nil || !recorded {
+		t.Fatal("missing grant invalidation", err)
+	}
+	if _, err := controlstatedb.New(reopened.pool).ListIngressServiceRuns(ctx, controlstatedb.ListIngressServiceRunsParams{
+		RunIds: []string{"srun_0123456789ABCDEFGHIJKL"}, Now: timestamptz(now),
+	}); err != nil {
+		t.Fatal("runtime cannot read ingress projection", err)
 	}
 	changes, err := reopened.CompareConnectorPeerWatchVersions(ctx, []ConnectorPeerWatchVersion{{RunID: "srun_0123456789ABCDEFGHIJKL"}})
 	if err != nil || len(changes) != 1 || changes[0].Revision != -1 {
