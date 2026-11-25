@@ -485,7 +485,7 @@ export function peerServer(
       return c.body(null, 422);
     } finally {
       pending.reading = false;
-      if (tracing) {
+      if (typeof KEEPALIVE_RAMP_UPLOAD_TRACE !== "undefined" && KEEPALIVE_RAMP_UPLOAD_TRACE) {
         console.info(
           "keepalive_donor_upload " +
             JSON.stringify({
