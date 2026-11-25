@@ -30,7 +30,7 @@ func assertionCallback(callback js.Value) (func(context.Context) (string, error)
 		if err != nil {
 			return "", workload.ErrAssertionUnavailable
 		}
-		resolved, ownedAbort, err := awaitWithAbort(value, reason)
+		resolved, ownedAbort, err := awaitWithAbort(value, reason.Equal)
 		if ownedAbort && ctx.Err() != nil {
 			return "", context.Cause(ctx)
 		}

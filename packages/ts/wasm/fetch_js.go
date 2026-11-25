@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"net/http"
@@ -29,9 +30,7 @@ func (t *fetchTransport) RoundTrip(request *http.Request) (_ *http.Response, res
 		return nil, errArguments
 	}
 	controller := js.Global().Get("AbortController").New()
-	// only this exact reason object proves that this request's abort rejected
-	// Fetch. error names/messages cannot distinguish a raced independent failure.
-	abortReason := js.Global().Get("Object").New()
+	abortReason, ownsAbort := newFetchAbortReason()
 	abort := func() { controller.Call("abort", abortReason) }
 	done := make(chan struct{})
 	stopAbort := context.AfterFunc(request.Context(), func() { defer close(done); abort() })
@@ -78,7 +77,7 @@ func (t *fetchTransport) RoundTrip(request *http.Request) (_ *http.Response, res
 	if err != nil {
 		return nil, err
 	}
-	response, ownedAbort, err := awaitWithAbort(value, abortReason)
+	response, ownedAbort, err := awaitWithAbort(value, ownsAbort)
 	if err != nil {
 		cause := context.Cause(request.Context())
 		if ownedAbort && cause != nil {
@@ -117,6 +116,29 @@ func (t *fetchTransport) RoundTrip(request *http.Request) (_ *http.Response, res
 	}, nil
 }
 
+func newFetchAbortReason() (js.Value, func(js.Value) bool) {
+	// workerd clones the reason object before rejecting Fetch. a private nonce
+	// survives the clone and distinguishes this abort from a raced host error.
+	const key = "tnlFetchAbortNonce"
+	nonce := js.ValueOf(rand.Text())
+	reason := js.ValueOf(map[string]any{key: nonce})
+	return reason, func(rejection js.Value) bool {
+		if rejection.Equal(reason) {
+			return true
+		}
+		if rejection.Type() != js.TypeObject || rejection.IsNull() {
+			return false
+		}
+		object := js.Global().Get("Object")
+		field, err := bridgeCall(object, "getOwnPropertyDescriptor", rejection, key)
+		if err != nil || field.IsUndefined() {
+			return false
+		}
+		hasValue, err := bridgeCall(object, "hasOwn", field, "value")
+		return err == nil && hasValue.Equal(js.ValueOf(true)) && field.Get("value").Equal(nonce)
+	}
+}
+
 func invoke(fn js.Value, args ...any) (value js.Value, err error) {
 	defer func() {
 		if recover() != nil {
@@ -134,11 +156,11 @@ func bridgeCall(value js.Value, name string, args ...any) (result js.Value, err 
 	return value.Call(name, args...), nil
 }
 func await(value js.Value) (result js.Value, err error) {
-	result, _, err = awaitWithAbort(value, js.Undefined())
+	result, _, err = awaitWithAbort(value, nil)
 	return result, err
 }
 
-func awaitWithAbort(value, abortReason js.Value) (result js.Value, ownedAbort bool, err error) {
+func awaitWithAbort(value js.Value, ownsAbort func(js.Value) bool) (result js.Value, ownedAbort bool, err error) {
 	defer func() {
 		if recover() != nil {
 			err = errArguments
@@ -160,7 +182,7 @@ func awaitWithAbort(value, abortReason js.Value) (result js.Value, ownedAbort bo
 	})
 	failed := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		once.Do(func() {
-			ownedAbort = abortReason.Type() == js.TypeObject && !abortReason.IsNull() && len(args) > 0 && args[0].Equal(abortReason)
+			ownedAbort = ownsAbort != nil && len(args) > 0 && ownsAbort(args[0])
 			err = errors.New("WASM host operation failed")
 			close(done)
 		})
