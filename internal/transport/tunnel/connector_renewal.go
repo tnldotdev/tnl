@@ -48,6 +48,21 @@ func (s *Session) ConnectorLegRenewalDeniedOnly(err error) bool {
 	return false
 }
 
+type connectorLegRenewalLocalClose struct {
+	session *Session
+	err     error
+}
+
+func (e *connectorLegRenewalLocalClose) Error() string { return e.err.Error() }
+func (e *connectorLegRenewalLocalClose) Unwrap() error { return e.err }
+
+// ConnectorLegRenewalClosedLocally reports only an exchange interrupted by the
+// same session's successful local close, with no independent renewal failure.
+func (s *Session) ConnectorLegRenewalClosedLocally(err error) bool {
+	closed, ok := err.(*connectorLegRenewalLocalClose)
+	return ok && closed != nil && closed.session == s
+}
+
 // RenewConnectorLeg exchanges a fresh proof on the existing native control stream.
 // it cannot move a claim to a different assignment or accepted source. callers
 // still fence their old local deadline before installing the returned duration.
@@ -64,15 +79,23 @@ func (s *Session) RenewConnectorLeg(ctx context.Context, requestID string, proof
 	}
 	synchronized := false
 	defer func() {
-		err = errors.Join(err, finish(err == nil))
-		if err != nil {
-			receipt = tunnelv1.ConnectorPairLegAccepted{}
-			if !synchronized {
-				// a missed or partial reply cannot become the next exchange's reply.
-				// retire this outer leg; its owner may replace it within old authority.
-				err = errors.Join(err, s.Close())
+		finishErr := finish(err == nil)
+		if err == nil && finishErr == nil {
+			return
+		}
+		receipt = tunnelv1.ConnectorPairLegAccepted{}
+		var closeErr error
+		if !synchronized {
+			// a missed or partial reply cannot become the next exchange's reply.
+			// retire this outer leg; its owner may replace it within old authority.
+			joinedLocalClose := finishErr == nil && muxsession.JoinedLocalClose(s.control, err)
+			closeErr = s.Close()
+			if joinedLocalClose && closeErr == nil {
+				err = &connectorLegRenewalLocalClose{session: s, err: err}
+				return
 			}
 		}
+		err = errors.Join(err, finishErr, closeErr)
 	}()
 	if err := tunnelv1.WriteControl(s.control, tunnelv1.Message{Type: tunnelv1.ConnectorLegRenew, ProtocolVersion: tunnelv1.Version,
 		RequestID: requestID, Role: tunnelv1.Connector, ConnectorPairLegProof: &proof}); err != nil {

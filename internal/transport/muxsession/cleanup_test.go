@@ -6,10 +6,13 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	yamux "github.com/libp2p/go-yamux/v5"
 )
 
 func TestYamuxWriterFailureDoesNotWaitForTLSCloseNotify(t *testing.T) {
@@ -159,5 +162,92 @@ func TestYamuxErrRetainsPeerCloseReason(t *testing.T) {
 	// the send loop can observe the peer close before the receive loop does.
 	if err := session.Err(); !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("lost peer close reason: %v", err)
+	}
+}
+
+type gatedYamuxSocketClose struct {
+	net.Conn
+	started, release chan struct{}
+	err              error
+}
+
+func (c *gatedYamuxSocketClose) Close() error {
+	close(c.started)
+	<-c.release
+	return errors.Join(c.Conn.Close(), c.err)
+}
+
+func TestYamuxLocalShutdownJoinsPhysicalClose(t *testing.T) {
+	for _, name := range []string{"local close", "failed local close", "peer close"} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				local, remote := net.Pipe()
+				socket := &gatedYamuxSocketClose{Conn: local, started: make(chan struct{}), release: make(chan struct{})}
+				release := sync.OnceFunc(func() { close(socket.release) })
+				physical := errors.New("independent socket close failure")
+				if name == "failed local close" {
+					socket.err = errors.Join(net.ErrClosed, physical)
+				}
+				client, err := newYamuxSession(socket, true, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { release(); _ = client.Close() }()
+				server, err := newYamuxSession(remote, false, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer server.Close()
+				stream, err := client.OpenStream(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := server.AcceptStream(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				read := make(chan error, 1)
+				go func() { _, err := stream.Read(make([]byte, 1)); read <- err }()
+				closed := make(chan error, 1)
+				if name == "peer close" {
+					if err := server.Close(); err != nil {
+						t.Fatal(err)
+					}
+					<-socket.started // let peer loss win before the local join.
+				}
+				go func() { closed <- client.Close() }()
+				<-socket.started
+				// publish the shutdown reason before the physical close can
+				// induce a competing read error on the socket.
+				if name != "peer close" {
+					select {
+					case <-client.Done():
+					default:
+						t.Error("socket close started before yamux recorded local shutdown")
+					}
+				}
+				select {
+				case err := <-read:
+					t.Fatal("stream read returned before physical close", err)
+				case err := <-closed:
+					t.Fatal("session returned before physical close", err)
+				default:
+				}
+				release()
+				closeErr, readErr := <-closed, <-read
+				if name == "failed local close" {
+					if !errors.Is(closeErr, physical) {
+						t.Fatal("joined socket close failure was lost", closeErr)
+					}
+				} else if closeErr != nil {
+					t.Fatal(closeErr)
+				}
+				if readErr == nil || JoinedLocalClose(stream, readErr) != (name == "local close") {
+					t.Fatal("wrong evidence for closed stream", readErr, closeErr)
+				}
+				if name == "peer close" && JoinedLocalClose(stream, yamux.ErrSessionShutdown) {
+					t.Fatal("local shutdown sentinel obscured the session's actual peer failure", readErr)
+				}
+			})
+		})
 	}
 }
