@@ -12,6 +12,7 @@ import {
   withCurrentDirectory,
 } from "../helpers/project.js";
 import {
+  closeTestWebSocket,
   holdLoopbackPort,
   openTestWebSocketWithMessage,
   requestTestServer,
@@ -583,6 +584,27 @@ test(
       expect(updatedModule.status).toBe(200);
       expect(updatedModule.body).toContain("Vite fixture HMR");
 
+      await closeTestWebSocket(socket);
+    });
+  },
+);
+
+test(
+  "registers and announces the replacement Vite listener after a config change",
+  { timeout: 60_000 },
+  async () => {
+    const fixture = await startViteFixture(await findAvailableLoopbackPort());
+    const announcement = "  ➜  tnl:     https://api.member.example";
+    const targetSchema = z.object({ target: z.string().url() });
+
+    await fixture.diagnose(async () => {
+      await expect(fixture.request()).resolves.toMatchObject({ path: "/v1/prepare" });
+      const initial = await fixture.request(1);
+      expect(initial.path).toBe("/v1/register");
+      const initialTarget = targetSchema.parse(initial.body).target;
+      await expect.poll(fixture.output).toContain(announcement);
+
+      // test listener replacement without leaving Vite browser transforms in flight.
       const config = join(fixture.directory, "vite.config.ts");
       const originalConfig = await readFile(config, "utf8");
       const restartPort = await findAvailableLoopbackPort();
@@ -591,17 +613,19 @@ test(
         originalConfig.replace("Number(process.env.TNL_FIXTURE_PORT)", String(restartPort)),
       );
       await expect
-        .poll(() => fixture.output().split("  ➜  tnl:     https://api.member.example").length - 1, {
+        .poll(() => fixture.output().split(announcement).length - 1, {
           timeout: 30_000,
         })
         .toBe(2);
       const restarted = fixture.requests.filter(({ path }) => path === "/v1/register");
       expect(restarted).toHaveLength(2);
-      const restartedTarget = z
-        .object({ target: z.string().url() })
-        .parse(restarted[1]?.body).target;
-      const restartedPage = await requestTestServer(Number(new URL(restartedTarget).port));
+      const restartedTarget = targetSchema.parse(restarted[1]?.body).target;
+      const restartedPort = Number(new URL(restartedTarget).port);
+      expect(restartedTarget).not.toBe(initialTarget);
+      expect(restartedPort).toBeGreaterThanOrEqual(restartPort);
+      const restartedPage = await requestTestServer(restartedPort);
       expect(restartedPage.status).toBe(200);
+      expect(restartedPage.body).toContain("Vite fixture");
     });
   },
 );
