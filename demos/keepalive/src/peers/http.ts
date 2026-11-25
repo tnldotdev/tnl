@@ -64,6 +64,7 @@ export async function readPeers(
   releaseID: string,
   signal?: AbortSignal,
   invitation?: string,
+  parent = HOST_PARENT,
 ) {
   const request = options(signal, invitation === undefined ? PEER_REQUEST_MS : 5_000);
   const response = await sendRequest(new URL(PEERS_PATH, origin), {
@@ -78,6 +79,7 @@ export async function readPeers(
     await readJSON(await requireStatus(response), MAX_MESSAGE_BYTES, request.signal ?? undefined),
     releaseID,
     Date.now(),
+    parent,
   );
 }
 

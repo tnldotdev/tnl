@@ -2,15 +2,24 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
 import { build as buildPage } from "vite";
+import { parseArgs } from "node:util";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease, type Asset } from "../src/release.ts";
 
 const demo = path.resolve(import.meta.dirname, "..");
-const dist = path.join(demo, "dist");
+const { values } = parseArgs({ options: { fleet: { type: "string", default: "prod" } } });
+if (values.fleet !== "prod" && values.fleet !== "ramp")
+  throw new Error("Use --fleet prod or ramp.");
+const dist = path.join(demo, values.fleet === "prod" ? "dist" : "dist-ramp");
+const define = { KEEPALIVE_FLEET: JSON.stringify(values.fleet) };
 const output = path.join(dist, "site");
 const wasm = path.join(demo, "../../packages/ts/dist/wasm/publisher.wasm");
 const options = { absWorkingDir: demo, bundle: true, format: "esm", minify: true } as const;
 
-await buildPage({ configFile: path.join(demo, "vite.config.ts") });
+await buildPage({
+  configFile: path.join(demo, "vite.config.ts"),
+  build: { outDir: output },
+  define,
+});
 const index = await readFile(path.join(output, "index.html"), "utf8");
 await writeFile(path.join(output, "start.html"), index.replace('id="app"', 'id="app" data-start'));
 await mkdir(path.join(output, "hosting/wasm"), { recursive: true });
@@ -21,7 +30,7 @@ await Promise.all([
     outfile: path.join(output, WORKER_PATH),
     // a blob Worker has no relative module path. this is the SDK asset base;
     // the worker reads the WASM from its verified local copy, not this URL.
-    define: { "import.meta.url": "keepaliveModuleURL" },
+    define: { ...define, "import.meta.url": "keepaliveModuleURL" },
     banner: {
       js: "const keepaliveModuleURL = new URL('/hosting/worker.js', self.location.origin).href;",
     },
@@ -50,5 +59,5 @@ await build({
   ...options,
   entryPoints: ["src/edge/worker.ts"],
   outfile: path.join(dist, "worker.mjs"),
-  define: { KEEPALIVE_RELEASE: JSON.stringify(release) },
+  define: { ...define, KEEPALIVE_RELEASE: JSON.stringify(release) },
 });

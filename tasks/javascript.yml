@@ -50,6 +50,7 @@ tasks:
     cmds:
       - task: build
       - node demos/keepalive/scripts/build.ts
+      - node demos/keepalive/scripts/build.ts --fleet ramp
 
   keepalive:dev:
     desc: Run the Keepalive proxy locally with Wrangler
@@ -68,6 +69,13 @@ tasks:
     desc: Check the Keepalive proxy and host commands
     cmds:
       - pnpm exec vitest run demos/keepalive/tests
+
+  keepalive:restart:
+    desc: Check certificate reuse after restarting Chrome on the empty ramp fleet
+    requires:
+      vars: [RELEASE, PROFILE_DIR]
+    cmds:
+      - node demos/keepalive/scripts/check-restart.ts --release "{{.RELEASE}}" --profile-dir "{{.PROFILE_DIR}}"
 
   keepalive:handoff:
     desc: Check a real browser handoff against an empty Keepalive test deployment

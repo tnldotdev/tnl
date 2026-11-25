@@ -1,0 +1,24 @@
+{
+  "name": "tnl-keepalive-ramp",
+  "main": "dist-ramp/worker.mjs",
+  "compatibility_date": "2026-11-18",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "ramp.keepthisalive.com", "custom_domain": true },
+    { "pattern": "start-ramp.keepthisalive.com", "custom_domain": true },
+  ],
+  "assets": {
+    "directory": "dist-ramp/site",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+  },
+  "vars": {
+    "SITE_ORIGIN": "https://ramp.keepthisalive.com",
+    "START_HOST": "start-ramp.keepthisalive.com",
+    "CONTROL_URL": "https://control.tnl.dev",
+    "TEAM_ID": "tm_BPjU3E13GNmrwrIFqPA9sF",
+    "PROJECT_KEY": "project-4f913a3d642157c67aba9a09bb376e5529dd1bafe419aba2",
+  },
+}

@@ -11,6 +11,10 @@ mise exec -- task js:keepalive:test
 `task js:keepalive:handoff` uses Chrome and an empty test deployment to check
 browser handoffs, certificate reuse, final-host outage, and restart.
 
+`task js:keepalive:restart` closes Chrome and reopens its saved profile on
+the ramp fleet. It checks that the seed and its next volunteer reuse the
+certificate. See [operations](../operations.md#prove-certificate-reuse).
+
 ### measure a handoff
 
 To check just the instruments, run `mise exec -- task js:keepalive:measurement-check`.

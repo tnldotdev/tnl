@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { hostOrigin, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/gossip.ts";
 import { ARTIFACT_PREFIX, readAssetResponse, type Asset, type Release } from "../src/release.ts";
 
 export type RecordSample = (event: string, fields: Record<string, unknown>) => void;
@@ -12,7 +12,7 @@ export function distribution(values: readonly number[]) {
 
 // Chromium's encodedDataLength counts received HTTP bytes, not decoded file
 // size or TCP/TLS framing. missing and interrupted requests are not zero bytes.
-export function copyTransfers(release: Release, startOrigin: string) {
+export function copyTransfers(release: Release, startOrigin: string, parent = HOST_PARENT) {
   const assets = new Map(release.assets.map((a) => [a.path, a.size]));
   const pending = new Map<string, { path: string; status?: number }>();
   const completed = new Set<string>();
@@ -22,7 +22,7 @@ export function copyTransfers(release: Release, startOrigin: string) {
     request(id: string, raw: string, method: string) {
       const url = URL.parse(raw);
       if (!url || method !== "GET" || url.search) return;
-      const path = hostOrigin(url.origin)
+      const path = hostOrigin(url.origin, parent)
         ? url.pathname
         : url.origin === startOrigin && url.pathname.startsWith(ARTIFACT_PREFIX + "/")
           ? url.pathname.slice(ARTIFACT_PREFIX.length)
@@ -59,8 +59,14 @@ export function copyTransfers(release: Release, startOrigin: string) {
   };
 }
 
-export async function probeHost(host: Host, asset: Asset, signal: AbortSignal, get = fetch) {
-  if (!hostOrigin(host.origin)) throw new Error("invalid publisher address");
+export async function probeHost(
+  host: Host,
+  asset: Asset,
+  signal: AbortSignal,
+  get = fetch,
+  parent = HOST_PARENT,
+) {
+  if (!hostOrigin(host.origin, parent)) throw new Error("invalid publisher address");
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(6_000)]);
   try {
     const response = await get(new URL(asset.path, host.origin), {
