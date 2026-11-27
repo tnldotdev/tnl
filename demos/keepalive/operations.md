@@ -60,6 +60,13 @@ the response. It reports an error body category without logging the body.
 When a diagnostic browser build provides a visitor connection ID, the trace
 also includes it for matching the ingress and relay logs.
 
+A canceled HTTP/2 request can leave its connection's admission running. The
+next request must use that decision, even after the setup deadline passes.
+A missing `connection.open` audit event alone does not prove admission failed:
+the request waiting to report it may have been canceled. A failed connection
+decision closes the connection after its response; canceling one request does
+not close its siblings.
+
 For volunteer admissions on ramp, capture `keepalive_donor_upload` from the
 inviter's browser console. It records the exact inviter run, bytes received,
 elapsed time, and outcome, without recording the invitation or upload body.
