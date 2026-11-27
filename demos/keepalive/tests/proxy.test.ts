@@ -312,7 +312,18 @@ it("switches away from a host silent before headers and lets the next body finis
 it("records why a public 503 had no eligible host without copying request data", async () => {
   const reportFile = vi.fn();
   const { proxy, fetchHost } = await setup(reportFile);
-  fetchHost.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  fetchHost.mockResolvedValueOnce(
+    new Response("cloudflare private body", {
+      status: 503,
+      headers: {
+        "CF-Ray": "a60235872cf36cfe-IAD",
+        "CF-Error-Type": "522",
+        "CF-Error-Origin": "edge",
+        Server: "cloudflare",
+        "Tnl-Error-Code": "not a diagnostic code",
+      },
+    }),
+  );
   const response = await proxy.file(
     request("/", { headers: { "CF-Ray": "untrusted value", Authorization: "Bearer secret" } }),
   );
@@ -340,6 +351,16 @@ it("records why a public 503 had no eligible host without copying request data",
         bodyOrValidationMs: expect.any(Number),
         searchBudgetLeftMs: expect.any(Number),
         elapsedMs: expect.any(Number),
+        upstream: {
+          ray: "a60235872cf36cfe-IAD",
+          tnlErrorCode: null,
+          publisher: false,
+          runID: null,
+          server: "cloudflare",
+          cfErrorType: "522",
+          cfErrorOrigin: "edge",
+          body: "cloudflare",
+        },
       },
     ],
   });

@@ -34,6 +34,7 @@ await Promise.all([
       ...define,
       "import.meta.url": "keepaliveModuleURL",
       KEEPALIVE_RAMP_UPLOAD_TRACE: JSON.stringify(values.fleet === "ramp"),
+      KEEPALIVE_RAMP_ORIGIN_TRACE: JSON.stringify(values.fleet === "ramp"),
     },
     banner: {
       js: "const keepaliveModuleURL = new URL('/hosting/worker.js', self.location.origin).href;",

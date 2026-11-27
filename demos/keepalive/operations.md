@@ -54,6 +54,10 @@ recovered by using another host. Requests that succeed without an upstream
 failure don't emit an entry. This tracing is temporary and is disabled in
 production builds.
 
+On upstream `5xx` responses, the trace also records the upstream Ray ID,
+`Tnl-Error-Code`, Cloudflare error headers, and whether a ramp browser marked
+the response. It reports an error body category without logging the body.
+
 For volunteer admissions on ramp, capture `keepalive_donor_upload` from the
 inviter's browser console. It records the exact inviter run, bytes received,
 elapsed time, and outcome, without recording the invitation or upload body.

@@ -8,6 +8,7 @@ import {
 } from "../peers/gossip.ts";
 import { contentType, readAssetResponse, readJSON, type Release } from "../release.ts";
 import { NO_HOST_HEADER, PEER_DISCOVERY_MS, TransportFailure } from "../network.ts";
+import { rayID, upstreamFailure } from "./upstream.ts";
 
 export function siteHeaders(type = "application/octet-stream") {
   return {
@@ -71,6 +72,7 @@ type ProxyAttempt = {
   bodyOrValidationMs: number | null;
   searchBudgetLeftMs: number;
   elapsedMs: number;
+  upstream?: Awaited<ReturnType<typeof upstreamFailure>>;
 };
 
 type FileSelection = {
@@ -171,6 +173,7 @@ export function createProxy(
     const started = selection === undefined ? undefined : performance.now();
     let headersMs: number | null = null;
     let outcome: ProxyAttempt["outcome"] = "invalid_response";
+    let upstream: ProxyAttempt["upstream"];
     const headers = new AbortController();
     try {
       const timer =
@@ -187,6 +190,11 @@ export function createProxy(
         clearTimeout(timer);
       }
       if (started !== undefined) headersMs = Math.round(performance.now() - started);
+      if (selection && response.status >= 500) {
+        outcome = "upstream_status";
+        upstream = await upstreamFailure(response, signal);
+        return undefined;
+      }
       const value = await check(response);
       signal.throwIfAborted();
       if (value !== undefined) outcome = "ok";
@@ -215,6 +223,7 @@ export function createProxy(
           bodyOrValidationMs: headersMs === null ? null : Math.max(0, elapsedMs - headersMs),
           searchBudgetLeftMs: Math.max(0, Math.round(selection.searchEndsAt - started)),
           elapsedMs,
+          ...(upstream === undefined ? {} : { upstream }),
         });
       }
       if (response?.bodyUsed === false) await response.body?.cancel().catch(() => {});
@@ -436,7 +445,6 @@ export function createProxy(
       ) {
         const suppressed = takeFileTrace();
         if (suppressed === undefined) return response;
-        const ray = request.headers.get("CF-Ray");
         reportFile?.({
           knownHosts: selection.knownHosts,
           eligibleHosts: selection.eligibleHosts,
@@ -445,7 +453,7 @@ export function createProxy(
           discoveryMs:
             selection.attempts.find((attempt) => attempt.kind === "discovery")?.elapsedMs ?? 0,
           suppressed,
-          ray: ray !== null && /^[a-f0-9]{16}(?:-[a-z]{3})?$/i.test(ray) ? ray : null,
+          ray: rayID(request.headers.get("CF-Ray")),
           asset: asset.path,
           status: response.status,
           elapsedMs: Math.round(performance.now() - started),

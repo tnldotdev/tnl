@@ -10,6 +10,8 @@ import { startPublisher } from "./publish.ts";
 import { chooseCertificate, describeCertificate } from "./certificate.ts";
 import { request, requireStatus } from "../network.ts";
 
+declare const KEEPALIVE_RAMP_ORIGIN_TRACE: boolean;
+
 const lifetime = new AbortController();
 const { signal } = lifetime;
 const emit = (update: HostUpdate) => globalThis.postMessage(update);
@@ -78,6 +80,16 @@ async function host(command: HostStart) {
       },
     );
     const supplied = chooseCertificate(command.inherited, command.bootstrap, Date.now());
+    const fetchPeers = peers.fetch;
+    const handle =
+      typeof KEEPALIVE_RAMP_ORIGIN_TRACE !== "undefined" && KEEPALIVE_RAMP_ORIGIN_TRACE
+        ? async (request: Request) => {
+            const response = await fetchPeers(request);
+            response.headers.set("X-Keepalive-Origin", "browser");
+            if (running !== undefined) response.headers.set("X-Keepalive-Run", running.host.runID);
+            return response;
+          }
+        : fetchPeers;
     running = await startPublisher(
       command.config,
       async (signal) => {
@@ -94,7 +106,7 @@ async function host(command: HostStart) {
         });
         return enrollmentKey.parse(await readJSON(await requireStatus(response), 1024, signal));
       },
-      peers.fetch,
+      handle,
       signal,
       supplied === undefined
         ? undefined
