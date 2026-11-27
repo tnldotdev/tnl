@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { parseArgs } from "node:util";
@@ -119,8 +119,27 @@ async function health() {
 }
 try {
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const sourceFiles = [
+    "./check-reader-load.ts",
+    "../tests/arrivals.ts",
+    "../tests/reader-load.ts",
+    "../tests/measure.ts",
+    "../src/release.ts",
+    "../src/network.ts",
+  ];
+  const sourceHashes = Object.fromEntries(
+    await Promise.all(
+      sourceFiles.map(async (path) => [
+        path,
+        createHash("sha256")
+          .update(await readFile(new URL(path, import.meta.url)))
+          .digest("hex"),
+      ]),
+    ),
+  );
   emit("start", {
     commit,
+    sourceHashes,
     release,
     target: target.origin,
     expectedRunID: values.run ?? null,

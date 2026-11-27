@@ -105,6 +105,11 @@ call control, use Docker, or load ingress and relays.
   rediscovery must not be reported as the normal system's behavior.
 - `DEPARTURE`: `current` uses production departure selection. `insertion` replays
   the earlier first-three-peers selection for a controlled comparison.
+- `POLICY`: `visitors` uses production recruitment. `capacity` applies the proposed
+  rule only inside the simulation and requires both `READER_BYTES_PER_SECOND`
+  (synthetic total offered reader demand) and `SAFE_BYTES_PER_HOST` (fixture budget).
+  Synthetic byte observations are proportional to each view's reader estimate,
+  not measurements of real browser delivery.
 
 Reports contain settings, source hashes, JSON bytes, exchange failures, joins,
 departures, and 15-second distributions of roster and audience views. A recruitment
@@ -183,6 +188,9 @@ On departure, the donor sends its final report to the confirmed successor first,
 then peers expected to remain beyond the replacement window. This remains
 best-effort work with at most three recipients and a one-second deadline; older
 departing peers are only fallback recipients.
+Routine gossip prefers fresh, non-suspect peers in three of every four probe
+slots. The fourth includes quiet peers so suspended hosts can recover. If no
+fresh peer is known, every slot can try quiet peers.
 
 For an existing coordinator-backed deployment, stop new turns on the old
 release and let active turns drain (including the one-hour first host) before

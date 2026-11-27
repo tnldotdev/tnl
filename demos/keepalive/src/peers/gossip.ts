@@ -181,6 +181,7 @@ export class Gossip {
   #nextPrune = Infinity;
   #saturatedUntil = 0;
   #probing = false;
+  #probeCount = 0;
   #presence:
     | {
         at: number;
@@ -529,19 +530,27 @@ export class Gossip {
   async probe(clock: () => number, random: () => number, send: PeerTransport): Promise<void> {
     if (this.#probing || this.#self.left) return;
     this.#forgetOldPeers(clock());
-    // try suspect and quiet hosts too: a suspended tab can return at the same URL.
     const now = clock();
     const eligible = ({ change }: Seen) => !change.left && (change.endsAt ?? Infinity) > now;
+    // keep membership moving through fresh peers instead of spending every
+    // exchange on a departed cohort. one in four slots still tries quiet or
+    // suspect peers, so a suspended tab can recover at the same URL.
+    const preferFresh = this.#probeCount++ % 4 !== 3;
+    const preferred = (peer: Seen) =>
+      eligible(peer) &&
+      (!preferFresh ||
+        (peer.suspectAt === undefined && now - peer.change.reportedAt < FRESH_REPORT_MS));
     let selected: Seen | undefined;
     for (let i = 0; i < 8; i++) {
       const candidate = this.#slots[Math.floor(random() * this.#slots.length)];
-      if (candidate !== undefined && eligible(candidate)) {
+      if (candidate !== undefined && preferred(candidate)) {
         selected = candidate;
         break;
       }
     }
     if (selected === undefined) {
-      const candidates = this.#slots.filter(eligible);
+      let candidates = this.#slots.filter(preferred);
+      if (candidates.length === 0 && preferFresh) candidates = this.#slots.filter(eligible);
       selected = candidates[Math.floor(random() * candidates.length)];
     }
     if (selected === undefined) return;

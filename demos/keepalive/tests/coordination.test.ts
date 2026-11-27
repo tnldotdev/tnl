@@ -22,6 +22,10 @@ it("replays actual bounded gossip deterministically over virtual JSON transport"
     rosterCoverage: { p50: 1, p95: 1, p99: 1 },
     freshAudienceCoverage: { p50: 1 },
   });
+  for (const sample of first.samples) {
+    expect(sample.rosterCoverage.min).toBeGreaterThanOrEqual(0);
+    expect(sample.rosterCoverage.max).toBeLessThanOrEqual(1);
+  }
 });
 
 it("records failed exchanges and stale views after an abrupt loss", async () => {
@@ -64,4 +68,36 @@ it("rejects unbounded or invalid settings", async () => {
   await expect(simulateCoordination({ ...settings, loss: Number.NaN })).rejects.toThrow(
     "invalid coordination settings",
   );
+  await expect(simulateCoordination({ ...settings, policy: "capacity" })).rejects.toThrow(
+    "invalid coordination settings",
+  );
+});
+
+it("compares capacity recruitment using an explicit synthetic budget, not a product default", async () => {
+  const result = await simulateCoordination({
+    ...settings,
+    hosts: 10,
+    durationMs: 1_200_000,
+    scenario: "turnover",
+    policy: "capacity",
+    readerBytesPerSecond: 0,
+    safeBytesPerSecondPerHost: 100_000,
+  });
+  expect(result.outcome).toBe("completed");
+  expect(result.assumptions.policy).toBe("capacity");
+  expect(result.samples.at(-1)?.hostTargets.p50).toBe(3);
+});
+
+it("recruits for offered byte demand even when the reader population is small", async () => {
+  const result = await simulateCoordination({
+    ...settings,
+    hosts: 10,
+    scenario: "turnover",
+    policy: "capacity",
+    readerBytesPerSecond: 2_000_000,
+    safeBytesPerSecondPerHost: 100_000,
+  });
+  expect(result.outcome).toBe("completed");
+  expect(result.joins).toBeGreaterThanOrEqual(20);
+  expect(result.samples.at(-1)?.hostTargets.p50).toBeGreaterThanOrEqual(19);
 });

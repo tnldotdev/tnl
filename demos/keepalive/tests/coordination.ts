@@ -3,6 +3,7 @@ import { HOST_PARENT, sameRun, type Host } from "../src/peers/host.ts";
 import { MAX_MESSAGE_BYTES } from "../src/peers/report.ts";
 import { HOST_TURN_MS, REPLACE_BEFORE_MS, hostTarget } from "../src/policy.ts";
 import { distribution } from "./measure.ts";
+import { capacityTarget } from "./recruitment.ts";
 
 export type CoordinationScenario = "growth" | "loss" | "partition" | "turnover";
 export type CoordinationSettings = {
@@ -14,6 +15,9 @@ export type CoordinationSettings = {
   loss: number;
   discovery?: "shared" | "none";
   departure?: "current" | "insertion";
+  policy?: "visitors" | "capacity";
+  readerBytesPerSecond?: number;
+  safeBytesPerSecondPerHost?: number;
 };
 
 // virtual time drives the production gossip implementation. this is not a
@@ -69,7 +73,7 @@ class Events {
 export function seededRandom(seed: number) {
   let state = seed >>> 0;
   return () => {
-    state += 0x6d2b79f5;
+    state = (state + 0x6d2b79f5) >>> 0;
     let n = Math.imul(state ^ (state >>> 15), state | 1);
     n ^= n + Math.imul(n ^ (n >>> 7), n | 61);
     return ((n ^ (n >>> 14)) >>> 0) / 4_294_967_296;
@@ -94,12 +98,28 @@ export type CoordinationSample = {
   joins: number;
   departures: number;
   invitations: number;
-  rosterCoverage: ReturnType<typeof distribution>;
-  staleHosts: ReturnType<typeof distribution>;
-  audience: ReturnType<typeof distribution>;
-  freshAudienceCoverage: ReturnType<typeof distribution>;
-  hostTargets: ReturnType<typeof distribution>;
+  readyBeyondWindow: number;
+  starting: number;
+  rosterCoverage: ReturnType<typeof viewDistribution>;
+  staleHosts: ReturnType<typeof viewDistribution>;
+  audience: ReturnType<typeof viewDistribution>;
+  freshAudienceCoverage: ReturnType<typeof viewDistribution>;
+  hostTargets: ReturnType<typeof viewDistribution>;
+  observedReady: ReturnType<typeof viewDistribution>;
+  observedStarting: ReturnType<typeof viewDistribution>;
+  observedDeficit: ReturnType<typeof viewDistribution>;
 };
+
+function viewDistribution(values: readonly number[]) {
+  const ordered = [...values].sort((a, b) => a - b);
+  return {
+    ...distribution(ordered),
+    min: ordered[0] ?? null,
+    p01: ordered[Math.ceil(ordered.length * 0.01) - 1] ?? null,
+    p05: ordered[Math.ceil(ordered.length * 0.05) - 1] ?? null,
+    max: ordered.at(-1) ?? null,
+  };
+}
 
 export async function simulateCoordination(settings: CoordinationSettings) {
   if (
@@ -118,6 +138,14 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     settings.loss > 0.5 ||
     (settings.discovery !== undefined && !["shared", "none"].includes(settings.discovery)) ||
     (settings.departure !== undefined && !["current", "insertion"].includes(settings.departure)) ||
+    (settings.policy !== undefined && !["visitors", "capacity"].includes(settings.policy)) ||
+    (settings.policy === "capacity" &&
+      (settings.readerBytesPerSecond === undefined ||
+        !Number.isFinite(settings.readerBytesPerSecond) ||
+        settings.readerBytesPerSecond < 0 ||
+        settings.safeBytesPerSecondPerHost === undefined ||
+        !Number.isFinite(settings.safeBytesPerSecondPerHost) ||
+        settings.safeBytesPerSecondPerHost <= 0)) ||
     !["growth", "loss", "partition", "turnover"].includes(settings.scenario)
   )
     throw new Error("invalid coordination settings");
@@ -166,6 +194,18 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     const total = introduced * 50;
     for (const [index, node] of live.entries())
       node.readers = Math.floor(total / live.length) + Number(index < total % live.length);
+  }
+
+  function target(node: Node) {
+    const tabs = node.view.tabs(now);
+    if (settings.policy !== "capacity") return hostTarget(tabs);
+    // synthetic offered load follows this fixture's reader population. the live
+    // system needs real load reports before it can use the candidate policy.
+    return capacityTarget({
+      countedReaderLeases: tabs,
+      readerBytesPerSecond: ((settings.readerBytesPerSecond ?? 0) * tabs) / (settings.hosts * 50),
+      safeBytesPerSecondPerHost: settings.safeBytesPerSecondPerHost ?? 0,
+    });
   }
 
   function wire(message: GossipMessage, envelope?: Host, discovery = false) {
@@ -339,7 +379,7 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       // an explicit 30 s fixture, not a measured browser or control operation.
       const offered = node.view.maybeStart(
         now,
-        hostTarget(node.view.tabs(now)),
+        target(node),
         () => !node.pendingReplacement,
         random,
       );
@@ -377,6 +417,9 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     const audience: number[] = [];
     const freshAudience: number[] = [];
     const targets: number[] = [];
+    const ready: number[] = [];
+    const starting: number[] = [];
+    const deficits: number[] = [];
     for (const node of live) {
       const hosts = node.view.hosts(now);
       coverage.push((1 + hosts.filter((host) => identities.has(host.runID)).length) / live.length);
@@ -384,7 +427,14 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       const tabs = node.view.tabs(now);
       audience.push(tabs);
       freshAudience.push(tabs / (introduced * 50));
-      targets.push(hostTarget(tabs));
+      const desired = target(node);
+      const available = node.view.readyBeyondWindow(now, hosts);
+      const pendingStarts =
+        Number(node.pendingReplacement) + hosts.filter((host) => host.startingUntil > now).length;
+      targets.push(desired);
+      ready.push(available);
+      starting.push(pendingStarts);
+      deficits.push(Math.max(0, desired - available - pendingStarts));
     }
     samples.push({
       elapsedMs: now - base,
@@ -392,11 +442,18 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       joins,
       departures,
       invitations,
-      rosterCoverage: distribution(coverage),
-      staleHosts: distribution(stale),
-      audience: distribution(audience),
-      freshAudienceCoverage: distribution(freshAudience),
-      hostTargets: distribution(targets),
+      readyBeyondWindow: live.filter(
+        (node) => !node.leaving && node.endsAt > now + REPLACE_BEFORE_MS,
+      ).length,
+      starting: live.filter((node) => node.pendingReplacement).length,
+      rosterCoverage: viewDistribution(coverage),
+      staleHosts: viewDistribution(stale),
+      audience: viewDistribution(audience),
+      freshAudienceCoverage: viewDistribution(freshAudience),
+      hostTargets: viewDistribution(targets),
+      observedReady: viewDistribution(ready),
+      observedStarting: viewDistribution(starting),
+      observedDeficit: viewDistribution(deficits),
     });
     if (now + 15_000 <= stopAt) events.add(now + 15_000, sample);
   }
@@ -454,6 +511,11 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       replacementStartupMs: settings.scenario === "turnover" ? 30_000 : null,
       confirmationReceiptMs: 12_000,
       departurePeers: settings.departure ?? "current",
+      policy: settings.policy ?? "visitors",
+      readerDemand:
+        settings.policy === "capacity"
+          ? "synthetic demand proportional to observed fixture readers; no live load measurements"
+          : null,
       volunteerSupply: settings.scenario === "turnover" ? "available at each donor tick" : "none",
       requestTimeoutMs: 1_800,
       discovery:

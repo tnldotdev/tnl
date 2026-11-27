@@ -182,3 +182,24 @@ it("sends departure to the exact successor and durable peers before older depart
   expect(view.departurePeers(now, successor)).not.toContainEqual(successor);
   expect(new Set(view.departurePeers(now).map((peer) => peer.runID)).size).toBe(3);
 });
+
+it("keeps routine gossip on fresh peers while still probing quiet peers", async () => {
+  const view = new Gossip(release, report(1), now);
+  fill(view, 100);
+  const later = now + 120_000;
+  const fresh = report(102, { reportedAt: later });
+  view.receive(message(fresh), later);
+  const direct: string[] = [];
+  for (let i = 0; i < 16; i++) {
+    await view.probe(
+      () => later,
+      () => 0,
+      async (target, _request, helper) => {
+        if (helper === undefined) direct.push(target.runID);
+        return target.runID === fresh.runID ? message({ ...fresh, seq: i + 2 }) : undefined;
+      },
+    );
+  }
+  expect(direct.filter((id) => id === fresh.runID)).toHaveLength(12);
+  expect(direct.filter((id) => id !== fresh.runID)).toHaveLength(4);
+});

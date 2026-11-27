@@ -13,6 +13,9 @@ const { values } = parseArgs({
     loss: { type: "string", default: "0" },
     discovery: { type: "string", default: "shared" },
     departure: { type: "string", default: "current" },
+    policy: { type: "string", default: "visitors" },
+    "reader-bytes-per-second": { type: "string" },
+    "safe-bytes-per-host": { type: "string" },
     report: { type: "string" },
   },
 });
@@ -30,11 +33,15 @@ if (discovery !== "shared" && discovery !== "none")
 const departure = values.departure;
 if (departure !== "current" && departure !== "insertion")
   throw new Error("departure must be current or insertion");
+const policy = values.policy;
+if (policy !== "visitors" && policy !== "capacity")
+  throw new Error("policy must be visitors or capacity");
 const report = values.report ? await open(values.report, "wx", 0o600) : undefined;
 try {
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const sourceFiles = [
     "../tests/coordination.ts",
+    "../tests/recruitment.ts",
     "../src/peers/gossip.ts",
     "../src/peers/report.ts",
     "../src/policy.ts",
@@ -60,6 +67,13 @@ try {
     loss: Number(values.loss),
     discovery,
     departure,
+    policy,
+    ...(values["reader-bytes-per-second"] === undefined
+      ? {}
+      : { readerBytesPerSecond: Number(values["reader-bytes-per-second"]) }),
+    ...(values["safe-bytes-per-host"] === undefined
+      ? {}
+      : { safeBytesPerSecondPerHost: Number(values["safe-bytes-per-host"]) }),
   });
   const line =
     JSON.stringify({
