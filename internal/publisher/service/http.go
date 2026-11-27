@@ -81,8 +81,10 @@ type HTTP struct {
 	Source                netip.AddrPort
 	Requests              *requestlimit.HTTP
 	Policy                *visitorlease.Lease
-	ReserveCapacity       func(context.Context) error
-	browser               *httpaccess.Browser
+	// ReserveCapacity waits for the connection owner's retained decision. the
+	// owner, not this request, bounds setup and joins its capacity exchange.
+	ReserveCapacity func(context.Context) error
+	browser         *httpaccess.Browser
 	nativeHTTP
 	probes       *requestlimit.HTTP
 	preparations chan struct{}

@@ -144,7 +144,11 @@ func TestSeparatedHTTPIPFilterAndReadinessProof(t *testing.T) {
 				connectionHTTP.Source = metadata.Source
 				connectionHTTP.ReserveCapacity = func(call context.Context) error {
 					capacityRequests.Add(1)
-					return transport.publisher.RequestServiceCapacity(call, header)
+					// this separated-ingress fixture owns its one exchange. the
+					// real publisher's httpAdmission supplies the setup deadline.
+					setup, cancel := context.WithDeadline(call, header.ExpiresAt)
+					defer cancel()
+					return transport.publisher.RequestServiceCapacity(setup, header)
 				}
 				return connectionHTTP.Forward(t.Context(), secured, target)
 			}(); err != nil {
