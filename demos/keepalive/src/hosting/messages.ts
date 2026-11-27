@@ -1,6 +1,6 @@
-import * as z from "zod";
+import * as z from "zod/mini";
 import { hostNameSchema } from "../peers/host-names.ts";
-import { hostOrigin, hostSchema, runIDSchema } from "../peers/gossip.ts";
+import { hostOrigin, hostSchema, runIDSchema } from "../peers/host.ts";
 import { releaseSchema } from "../release.ts";
 import { PULSE_SECONDS } from "./activity.ts";
 import { hostingConfig, invitationSchema } from "../enrollment.ts";
@@ -13,13 +13,15 @@ export const hostCommand = z.discriminatedUnion("type", [
     files: z.map(z.string(), z.instanceof(ArrayBuffer)),
     config: hostingConfig,
     requestID: z.uuid(),
-    inherited: inheritedCertificate.optional(),
+    inherited: z.optional(inheritedCertificate),
     bootstrap: z.boolean(),
     startupEndsAt: z.int(),
     name: hostNameSchema,
-    firstHostToContact: hostSchema.refine(({ origin }) => hostOrigin(origin)).optional(),
-    invitation: invitationSchema.optional(),
-    pageOrigin: z.url({ protocol: /^https?$/ }).refine((value) => new URL(value).origin === value),
+    firstHostToContact: z.optional(hostSchema.check(z.refine(({ origin }) => hostOrigin(origin)))),
+    invitation: z.optional(invitationSchema),
+    pageOrigin: z
+      .url({ protocol: /^https?$/ })
+      .check(z.refine((value) => new URL(value).origin === value)),
   }),
   z.strictObject({ type: z.literal("stop") }),
 ]);
@@ -28,7 +30,7 @@ export type HostStart = Extract<z.infer<typeof hostCommand>, { type: "start" }>;
 export const hostUpdate = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("published"),
-    host: hostSchema.refine(({ origin }) => hostOrigin(origin)),
+    host: hostSchema.check(z.refine(({ origin }) => hostOrigin(origin))),
   }),
   z
     .strictObject({
@@ -37,27 +39,24 @@ export const hostUpdate = z.discriminatedUnion("type", [
       since: z.int(),
       endsAt: z.int(),
       startedAt: z.int(),
-      hosts: z.int().positive(),
+      hosts: z.int().check(z.positive()),
       saturated: z.boolean(),
       runID: runIDSchema,
-      tabs: z.int().nonnegative(),
-      localTabs: z.int().nonnegative(),
+      tabs: z.int().check(z.nonnegative()),
+      localTabs: z.int().check(z.nonnegative()),
     })
-    .refine(({ localTabs, tabs }) => localTabs <= tabs),
+    .check(z.refine(({ localTabs, tabs }) => localTabs <= tabs)),
   z.strictObject({
     type: z.literal("activity"),
-    second: z.int().nonnegative(),
-    pulse: z
-      .string()
-      .length(PULSE_SECONDS)
-      .regex(/^[_|]+$/),
-    requests: z.int().nonnegative(),
+    second: z.int().check(z.nonnegative()),
+    pulse: z.string().check(z.length(PULSE_SECONDS), z.regex(/^[_|]+$/)),
+    requests: z.int().check(z.nonnegative()),
   }),
   z.strictObject({ type: z.literal("failed") }),
   z.strictObject({
     type: z.literal("stopped"),
     expired: z.boolean(),
-    requests: z.int().nonnegative(),
+    requests: z.int().check(z.nonnegative()),
   }),
 ]);
 export type HostUpdate = z.infer<typeof hostUpdate>;

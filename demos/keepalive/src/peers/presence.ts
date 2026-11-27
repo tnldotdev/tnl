@@ -1,4 +1,4 @@
-import * as z from "zod";
+import * as z from "zod/mini";
 
 export const PRESENCE_PATH = "/__keepalive/presence";
 export const AUDIENCE_PATH = "/__keepalive/audience";
@@ -21,7 +21,7 @@ export function sampledTab(tab: string) {
 
 export const heartbeatSchema = z.strictObject({
   tab: z.uuid(),
-  releaseID: z.string().regex(/^[a-f0-9]{64}$/),
+  releaseID: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
 });
 
 export class TabLeases {

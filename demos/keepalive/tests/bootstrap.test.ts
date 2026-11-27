@@ -7,7 +7,7 @@ import {
   UploadTooSlow,
   hostTab,
 } from "../src/hosting/tab.ts";
-import { HOST_PARENT, PEERS_PATH } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH } from "../src/peers/host.ts";
 import { RELEASE_PATH, WASM_PATH, WORKER_PATH, digest } from "../src/release.ts";
 import { HTTPFailure, NO_HOST_HEADER, NoReachableHost } from "../src/network.ts";
 

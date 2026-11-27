@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/host.ts";
 import { createProxy } from "../src/edge/proxy.ts";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts";
 import { NO_HOST_HEADER } from "../src/network.ts";

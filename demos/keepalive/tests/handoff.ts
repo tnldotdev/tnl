@@ -6,7 +6,7 @@ import { chromium, type Page } from "playwright";
 import { fleets } from "../src/fleets.ts";
 import { readPeers } from "../src/peers/http.ts";
 import { HOST_TURN_MS, REPLACE_BEFORE_MS } from "../src/policy.ts";
-import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/host.ts";
 import {
   MAX_MANIFEST_BYTES,
   RELEASE_PATH,

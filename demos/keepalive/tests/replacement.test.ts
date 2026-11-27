@@ -1,7 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
   checkUpload,
-  InvitationUnavailable,
   peerServer,
   readInviterCertificate,
   releaseInvitation,
@@ -9,7 +8,9 @@ import {
 } from "../src/peers/http.ts";
 import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
 import { INVITATION_PATH, READY_HEADER } from "../src/enrollment.ts";
-import { Gossip, HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/gossip.ts";
+import { Gossip } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/host.ts";
+import { InvitationUnavailable } from "../src/peers/invitation.ts";
 
 it("allows five seconds at the donor plus time for the request to reach it", async () => {
   vi.useFakeTimers();

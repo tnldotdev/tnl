@@ -1,25 +1,13 @@
 import { expect, it, vi } from "vitest";
-import {
-  Gossip,
-  HOST_PARENT,
-  MAX_CHANGES,
-  PEERS_PATH,
-  SUSPECT_MS,
-  parseMessage,
-  type Host,
-  type HostHistory,
-} from "../src/peers/gossip.ts";
+import { Gossip, SUSPECT_MS, parseMessage, type HostHistory } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/host.ts";
+import { MAX_CHANGES } from "../src/peers/report.ts";
+import { presenceSummary } from "../src/peers/audience.ts";
 import { hostBranches, visibleBranches, type Branch } from "../src/page/host-tree.ts";
 import { peerServer } from "../src/peers/http.ts";
 import { PRESENCE_PATH } from "../src/peers/presence.ts";
-import {
-  MAX_TREE_HOSTS,
-  TREE_PATH,
-  presenceSummary,
-  treeHost,
-  treeSample,
-} from "../src/peers/view.ts";
-import * as z from "zod";
+import { MAX_TREE_HOSTS, TREE_PATH, treeHost, treeSample } from "../src/peers/view.ts";
+import * as z from "zod/mini";
 
 const pageOrigin = "https://keepthisalive.com";
 const release = "a".repeat(64);

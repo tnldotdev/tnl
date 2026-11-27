@@ -52,6 +52,8 @@ and clean up their own services; they need Docker. Some CLI suites require Linux
 `go:test:integration:deployment-database` also needs `psql` 16 or newer on `PATH`.
 Browser tests need Chrome. Hosted Worker tests also need a Wrangler login:
 `mise exec -- wrangler login --device --browser=false`.
+`task js:keepalive:test:browser` checks Keepalive's built page in Chrome with
+protocol fixtures; it does not need a deployed server.
 
 For example, to check PostgreSQL migrations:
 

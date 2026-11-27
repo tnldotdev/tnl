@@ -1,15 +1,7 @@
 import { expect, it } from "vitest";
-import {
-  Gossip,
-  HOST_PARENT,
-  KEEP_MS,
-  MAX_CHANGES,
-  MAX_MESSAGE_BYTES,
-  MAX_PEERS,
-  SUSPECT_MS,
-  parseMessage,
-  type Change,
-} from "../src/peers/gossip.ts";
+import { Gossip, KEEP_MS, SUSPECT_MS, parseMessage, type Change } from "../src/peers/gossip.ts";
+import { HOST_PARENT } from "../src/peers/host.ts";
+import { MAX_CHANGES, MAX_MESSAGE_BYTES, MAX_PEERS } from "../src/peers/report.ts";
 
 const now = Date.UTC(2026, 10, 19);
 const release = "a".repeat(64);

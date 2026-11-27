@@ -1,11 +1,6 @@
-import {
-  MAX_MESSAGE_BYTES,
-  PEERS_PATH,
-  SHARED_HOST,
-  hostIdentity,
-  parseMessage,
-  type GossipMessage,
-} from "../peers/gossip.ts";
+import { parseMessage, type GossipMessage } from "../peers/gossip.ts";
+import { PEERS_PATH, SHARED_HOST, hostIdentity } from "../peers/host.ts";
+import { MAX_MESSAGE_BYTES } from "../peers/report.ts";
 import { contentType, readAssetResponse, readJSON, type Release } from "../release.ts";
 import { NO_HOST_HEADER, PEER_DISCOVERY_MS, TransportFailure } from "../network.ts";
 import { rayID, upstreamFailure } from "./upstream.ts";

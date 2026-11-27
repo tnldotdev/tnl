@@ -1,6 +1,6 @@
 import { publish, publisher, type ServiceCertificateSource } from "@tnldotdev/tnl/browser";
-import type * as z from "zod";
-import { parseHost } from "../peers/gossip.ts";
+import type * as z from "zod/mini";
+import { parseHost } from "../peers/host.ts";
 import { fleetName } from "../fleets.ts";
 import type { hostingConfig } from "../enrollment.ts";
 

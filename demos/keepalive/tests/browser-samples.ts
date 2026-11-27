@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Browser, Page } from "playwright";
-import { HOST_PARENT, parseHost, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, parseHost, type Host } from "../src/peers/host.ts";
 import { STARTUP_MS } from "../src/policy.ts";
 import type { Asset, Release } from "../src/release.ts";
 import { copyTransfers, periodic, probeHost, type RecordSample } from "./measure.ts";

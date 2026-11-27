@@ -4,7 +4,8 @@ import {
   chooseCertificate,
   describeCertificate,
 } from "../src/hosting/certificate.ts";
-import { Gossip, HOST_PARENT, type Host } from "../src/peers/gossip.ts";
+import { Gossip } from "../src/peers/gossip.ts";
+import { HOST_PARENT, type Host } from "../src/peers/host.ts";
 import { peerServer } from "../src/peers/http.ts";
 
 const minute = 60_000;

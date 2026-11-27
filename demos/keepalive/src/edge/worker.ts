@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { credentials, type CredentialBindings } from "./credentials.ts";
 import { deploymentCredential } from "./deployment-credential.ts";
 import { CONFIG_PATH, CREDENTIALS_PATH, hostingConfig } from "../enrollment.ts";
-import { HOST_PARENT, PEERS_PATH } from "../peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH } from "../peers/host.ts";
 import { AUDIENCE_PATH } from "../peers/presence.ts";
 import { createProxy, siteHeaders } from "./proxy.ts";
 import { ARTIFACT_PREFIX, RELEASE_PATH, contentType, releaseSchema } from "../release.ts";

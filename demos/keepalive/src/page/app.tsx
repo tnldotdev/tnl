@@ -1,33 +1,26 @@
 import "../validation.ts";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/solid-query";
 import {
-  QueryClient,
-  QueryClientProvider,
-  skipToken,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { hostBranches, visibleBranches, type Branch, type TreeHost } from "./host-tree.ts";
-import { PULSE_SECONDS, requestPulse } from "../hosting/activity.ts";
-import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  ErrorBoundary,
+  lazy,
+  onCleanup,
+  Show,
+  Suspense,
+} from "solid-js";
+import { render } from "solid-js/web";
 import type { HostUpdate } from "../hosting/messages.ts";
-import { turnLabel } from "../policy.ts";
-import { fleet } from "../fleets.ts";
-import {
-  AlreadyHosting,
-  HostingInAnotherTab,
-  HostingUnavailable,
-  UploadTooSlow,
-  hostTab,
-  type HostState,
-} from "../hosting/tab.ts";
-import { readTree } from "../peers/view.ts";
+import type { HostState } from "../hosting/tab.ts";
 import { HEARTBEAT_MS } from "../peers/presence.ts";
-import { InvitationUnavailable } from "../peers/http.ts";
-import { NoReachableHost, retryDelay } from "../network.ts";
+import { fleet } from "../fleets.ts";
+import { NoReachableHost } from "../network.ts";
+import { turnSounds, turnWarning, protectHostingTab } from "./attention.ts";
 import { createVisitorCheck, type Observation } from "./visitor.ts";
 
+const visitorKey = ["visitor"] as const;
 const labels = {
   copying: "Copying the site from another host…",
   waiting: "You've volunteered. This tab will host when needed.",
@@ -36,10 +29,28 @@ const labels = {
   hosting: "This tab is hosting.",
   stopping: "Stopping hosting…",
 } as const;
+const pluralRequests = (requests: number) =>
+  `${requests.toLocaleString()} ${requests === 1 ? "request" : "requests"}`;
 
-function countdown(endsAt: number, now: number) {
-  const seconds = Math.max(0, Math.ceil((endsAt - now) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+const TurnView = lazy(() => import("./turn.tsx"));
+
+function loadTurn(signal: AbortSignal) {
+  signal.throwIfAborted();
+  return new Promise<typeof import("./turn.tsx")>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    // imports cannot be canceled, but a late module must never start a turn.
+    void import("./turn.tsx").then(
+      (module) => {
+        signal.removeEventListener("abort", abort);
+        resolve(module);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function age(since: number, now: number) {
@@ -50,440 +61,338 @@ function age(since: number, now: number) {
   return days > 0 ? `${days}d ${clock}` : clock;
 }
 
-function BranchRow({
-  branch,
-  now,
-  self,
-  depth = 0,
-}: {
-  branch: Branch;
-  now: number;
+function HostPanel(props: {
+  origin: string;
+  focus: string;
   self: string | undefined;
-  depth?: number;
+  now: number;
 }) {
-  const { host, children } = branch;
-  const label = host.name ?? "unnamed host";
-  const former = host.left || (host.endsAt !== undefined && host.endsAt <= now);
-  const state = former ? "former host" : host.unreachable ? "unreachable" : undefined;
+  // a new expansion can retry a failed chunk; errors stay inside this feature.
+  const Hosts = lazy(() => import("./hosts.tsx"));
   return (
-    <li>
-      <span className={state !== undefined ? "former-host" : undefined}>
-        {host.runID === self ? <strong>{label} (you)</strong> : label}
-        {state && <small> ({state})</small>}
-      </span>
-      {children.length > 0 && (
-        <ul className={depth < 12 ? "host-tree" : "host-tree host-tree-deep"}>
-          {children.map((child) => (
-            <BranchRow
-              key={child.host.runID}
-              branch={child}
-              now={now}
-              self={self}
-              depth={depth + 1}
-            />
-          ))}
-        </ul>
-      )}
-    </li>
+    <ErrorBoundary
+      fallback={<p>Couldn't load the host report. Close and reopen hosts to try again.</p>}
+    >
+      <Suspense fallback={<p>Loading the host report…</p>}>
+        <Hosts origin={props.origin} focus={props.focus} self={props.self} now={props.now} />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
-const TREE_ROWS = 16;
-const TREE_REFRESH_MS = 15_000;
-
-function Hosts({
-  origin,
-  now,
-  self,
-  focus,
-}: {
-  origin: string | undefined;
-  now: number;
-  self: string | undefined;
-  focus: string | undefined;
-}) {
-  const [visibleRows, setVisibleRows] = useState(TREE_ROWS);
-  const [open, setOpen] = useState(false);
-  const tree = useQuery({
-    queryKey: ["host-tree", origin, focus],
-    queryFn:
-      open && origin !== undefined && focus !== undefined
-        ? ({ signal }) => readTree(origin, focus, signal)
-        : skipToken,
-    refetchInterval: open ? TREE_REFRESH_MS : false,
-    staleTime: 5_000,
-    retry: (failures, error) => failures === 0 && retryDelay(error) !== undefined,
-    retryDelay: (_failures, error) => retryDelay(error) ?? 0,
-  });
-  const roster = tree.data ?? emptyRoster;
-  const branches = useMemo(() => hostBranches(roster, focus), [roster, focus]);
-  const selected = useMemo(
-    () => visibleBranches(branches, focus, visibleRows),
-    [branches, focus, visibleRows],
-  );
-  if (origin === undefined || focus === undefined) return null;
-  return (
-    <details className="host-details" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>hosts</summary>
-      <p className="tree-note">Follow the site from one browser to the next.</p>
-      {selected.branches.some(({ host }) => host.copyFrom !== undefined) && (
-        <p className="tree-note">Earlier hosts aren’t shown.</p>
-      )}
-      {selected.branches.length > 0 ? (
-        <ul className="host-tree">
-          {selected.branches.map((branch) => (
-            <BranchRow key={branch.host.runID} branch={branch} now={now} self={self} />
-          ))}
-        </ul>
-      ) : (
-        <p>
-          {tree.isError
-            ? "Couldn't load the host report. We'll try again."
-            : "Waiting for a host report."}
-        </p>
-      )}
-      {selected.more && (
-        <button
-          className="text-action"
-          type="button"
-          onClick={() => setVisibleRows((count) => count + TREE_ROWS)}
-        >
-          show more
-        </button>
-      )}
-    </details>
-  );
-}
-
-const emptyRoster: readonly TreeHost[] = [];
-const visitorKey = ["visitor"] as const;
-const pluralRequests = (requests: number) =>
-  `${requests.toLocaleString()} ${requests === 1 ? "request" : "requests"}`;
-
-function App({ bootstrap }: { bootstrap: boolean }) {
-  const [host, setHost] = useState<HostState>();
-  const [lifetime, setLifetime] = useState<AbortController>();
-  const [activity, setActivity] = useState<Extract<HostUpdate, { type: "activity" }>>();
-  const [finished, setFinished] = useState<number>();
-  const [retry, setRetry] = useState(false);
-  const [message, setMessage] = useState("");
-  const [alreadyHosting, setAlreadyHosting] = useState(false);
-  const [now, setNow] = useState(Date.now);
-  const [localStart, setLocalStart] = useState<number>();
-  const [sound, setSound] = useState(true);
-  const chirp = useRef<ReturnType<typeof turnSounds> | undefined>(undefined);
+function App(props: { bootstrap: boolean }) {
+  const [host, setHost] = createSignal<HostState>();
+  const [lifetime, setLifetime] = createSignal<AbortController>();
+  const [activity, setActivity] = createSignal<Extract<HostUpdate, { type: "activity" }>>();
+  const [finished, setFinished] = createSignal<number>();
+  const [retry, setRetry] = createSignal(false);
+  const [message, setMessage] = createSignal("");
+  const [alreadyHosting, setAlreadyHosting] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const [localStart, setLocalStart] = createSignal<number>();
+  const [sound, setSound] = createSignal(true);
+  const [treeOpen, setTreeOpen] = createSignal(false);
+  let chirp: ReturnType<typeof turnSounds>;
+  let mounted = true;
   const queryClient = useQueryClient();
-  const [checkVisitor] = useState(createVisitorCheck);
-  const visitor = useQuery({
+  const checkVisitor = createVisitorCheck();
+  const visitor = useQuery(() => ({
     queryKey: visitorKey,
     queryFn: ({ signal }) => checkVisitor(signal),
     // one check already tries multiple hosts. don't replay the whole heartbeat.
     retry: false,
     refetchInterval: ({ state }) => {
       if (state.status === "error") return 8_000 + Math.random() * 4_000;
-      // keep looking for a new host at the old pace while nobody is serving.
       return state.data === null ? 40_000 : HEARTBEAT_MS;
     },
     refetchIntervalInBackground: true,
     staleTime: 5_000,
+    throwOnError: false,
+  }));
+  const hosting = createMemo(() => {
+    const current = host();
+    return current?.type === "hosting" ? current : undefined;
   });
-  const shouldWarn = useMemo(turnWarning, []);
-  const label = turnLabel(bootstrap);
-  const hosting = host?.type === "hosting" ? host : undefined;
-  const active = hosting !== undefined;
-  const observed = visitor.isSuccess && !visitor.isPaused ? visitor.data : undefined;
-  const unavailable = !active && observed === null;
-  const canVolunteer = observed != null;
-  // query keeps the last good value when a refetch fails.
-  const startedAt =
-    hosting?.startedAt ?? (visitor.data === null ? null : (visitor.data?.startedAt ?? localStart));
-  const ticking = typeof startedAt === "number";
-  useEffect(() => {
+  const observed = () => (visitor.isSuccess && !visitor.isPaused ? visitor.data : undefined);
+  const unavailable = () => hosting() === undefined && observed() === null;
+  const canVolunteer = () => observed() != null;
+  // retain the clock on a failed refetch, but clear it on verified final-host loss.
+  const startedAt = createMemo(
+    () =>
+      hosting()?.startedAt ??
+      (visitor.data === null ? null : (visitor.data?.startedAt ?? localStart())),
+  );
+  const ticking = () => typeof startedAt() === "number";
+  const shouldWarn = turnWarning();
+  createEffect(() => {
+    now();
+    const current = hosting();
     if (
-      hosting &&
-      !lifetime?.signal.aborted &&
-      shouldWarn(hosting.runID, hosting.endsAt, Date.now())
+      current &&
+      !lifetime()?.signal.aborted &&
+      shouldWarn(current.runID, current.endsAt, Date.now())
     )
-      chirp.current?.play("warning");
-  }, [hosting, now, shouldWarn, lifetime]);
-  useEffect(() => {
-    if (!ticking) return;
+      chirp?.play("warning");
+  });
+  createEffect(() => {
+    if (!ticking()) return;
     const timer = setInterval(() => setNow(Date.now()), 1_000);
-    setNow(Date.now());
-    return () => clearInterval(timer);
-  }, [ticking]);
-  useEffect(() => {
-    if (active) return protectHostingTab();
-    return undefined;
-  }, [active]);
-  useEffect(() => {
-    if (!unavailable) return;
+    onCleanup(() => clearInterval(timer));
+  });
+  const active = createMemo(() => hosting() !== undefined);
+  createEffect(() => {
+    if (active()) onCleanup(protectHostingTab());
+  });
+  createEffect(() => {
+    if (!unavailable()) return;
     setAlreadyHosting(false);
-    if (!bootstrap && host?.type === "waiting") lifetime?.abort(new NoReachableHost());
-  }, [unavailable, bootstrap, host, lifetime]);
-  const hosts = hosting?.hosts ?? observed?.hosts ?? 0;
-  const visitors = hosting?.tabs ?? observed?.tabs ?? 0;
+    if (!props.bootstrap && host()?.type === "waiting") lifetime()?.abort(new NoReachableHost());
+  });
+  onCleanup(() => {
+    mounted = false;
+    lifetime()?.abort();
+    closeChirp();
+    document.title = "can we keep this alive?";
+  });
+  const hosts = () => hosting()?.hosts ?? observed()?.hosts ?? 0;
+  const visitors = () => hosting()?.tabs ?? observed()?.tabs ?? 0;
+  const origin = () => hosting()?.origin ?? observed()?.host.origin;
+  const focus = () => hosting()?.runID ?? observed()?.host.runID;
+  const treeTarget = createMemo(() => {
+    const address = origin();
+    const run = focus();
+    return address !== undefined && run !== undefined ? { origin: address, focus: run } : undefined;
+  });
+  const clockText = () => {
+    const start = startedAt();
+    return start === null ? "00h 00m 00s" : start === undefined ? "—" : age(start, now());
+  };
 
   function closeChirp() {
-    chirp.current?.close();
-    chirp.current = undefined;
+    chirp?.close();
+    chirp = undefined;
   }
 
   function toggleSound() {
-    const enabled = !sound;
+    const enabled = !sound();
     setSound(enabled);
     if (!enabled) closeChirp();
-    else if (lifetime !== undefined) chirp.current = turnSounds();
+    else if (lifetime() !== undefined) chirp = turnSounds();
   }
 
-  function start() {
-    if (lifetime !== undefined || (!bootstrap && !canVolunteer)) return;
+  async function start() {
+    if (lifetime() !== undefined || (!props.bootstrap && !canVolunteer())) return;
     const stop = new AbortController();
-    if (sound) chirp.current = turnSounds();
-    setLifetime(stop);
-    setActivity(undefined);
-    setFinished(undefined);
-    setRetry(false);
-    setMessage("");
-    setAlreadyHosting(false);
+    // audio permission must be requested during the click, before loading code.
+    if (sound()) chirp = turnSounds();
+    batch(() => {
+      setLifetime(stop);
+      setActivity(undefined);
+      setFinished(undefined);
+      setRetry(false);
+      setMessage("");
+      setAlreadyHosting(false);
+    });
     let hosted = false;
-    void hostTab(
-      bootstrap,
-      stop.signal,
-      (next) => {
-        if (next.type === "checking") chirp.current?.play("invitation");
-        if (next.type === "hosting") {
-          hosted = true;
-          setLocalStart(next.startedAt);
-        }
-        document.title =
-          next.type === "hosting" ? "hosting · keepalive" : "can we keep this alive?";
-        setHost(next);
-      },
-      setActivity,
-    )
-      .then(
-        ({ expired, requests }) => {
-          performance.mark("keepalive ended", { detail: expired ? "completed" : "stopped" });
-          if (hosted) setFinished(requests);
+    try {
+      const { takeTurn } = await loadTurn(stop.signal);
+      stop.signal.throwIfAborted();
+      const result = await takeTurn(
+        props.bootstrap,
+        stop.signal,
+        (next) => {
+          if (!mounted) return;
+          if (next.type === "checking") chirp?.play("invitation");
+          if (next.type === "hosting") {
+            hosted = true;
+            setLocalStart(next.startedAt);
+          }
+          document.title =
+            next.type === "hosting" ? "hosting · keepalive" : "can we keep this alive?";
+          setHost(next);
+        },
+        setActivity,
+      );
+      if (!mounted) return;
+      switch (result.type) {
+        case "finished":
+          if (result.hosted) setFinished(result.requests);
           setMessage(
-            expired
+            result.expired
               ? "Your turn is over. Thanks for hosting."
-              : hosted
+              : result.hosted
                 ? "Thanks for hosting."
                 : "This tab stopped.",
           );
-        },
-        (error: unknown) => {
-          performance.mark("keepalive ended", {
-            detail: stop.signal.aborted
-              ? "stopped"
-              : error instanceof DOMException && error.name === "TimeoutError"
-                ? "expired"
-                : "failed",
-          });
-          if (error instanceof AlreadyHosting) {
-            setAlreadyHosting(true);
-            return;
-          }
-          if (stop.signal.reason instanceof NoReachableHost) return;
-          if (error instanceof NoReachableHost) {
-            void queryClient.cancelQueries({ queryKey: visitorKey }).then(() => {
-              queryClient.setQueryData<Observation | null>(visitorKey, null);
-            });
-            return;
-          }
+          break;
+        case "already-hosting":
+          setAlreadyHosting(true);
+          break;
+        case "no-host":
+          await queryClient.cancelQueries({ queryKey: visitorKey });
+          queryClient.setQueryData<Observation | null>(visitorKey, null);
+          break;
+        case "failed":
           setRetry(!stop.signal.aborted);
-          setMessage(
-            stop.signal.aborted
-              ? "This tab stopped."
-              : error instanceof HostingInAnotherTab
-                ? "Another tab in this browser profile is hosting or waiting to host."
-                : error instanceof HostingUnavailable
-                  ? "This tab couldn't start hosting. Try again later."
-                  : error instanceof InvitationUnavailable
-                    ? `${error.message} Try again.`
-                    : error instanceof UploadTooSlow
-                      ? "This tab couldn't complete the upload check. Try again."
-                      : "This tab couldn't host the site. Try again.",
-          );
-        },
-      )
-      .finally(() => {
-        closeChirp();
+          setMessage(result.message);
+          break;
+        case "observation-owned":
+          break;
+      }
+    } catch {
+      if (!mounted) return;
+      // a failed lazy import is retryable; stopping during it starts no turn.
+      setRetry(!stop.signal.aborted);
+      setMessage(
+        stop.signal.aborted
+          ? "This tab stopped."
+          : "This tab couldn't load the hosting code. Try again.",
+      );
+    } finally {
+      closeChirp();
+      if (mounted) {
         document.title = "can we keep this alive?";
-        setHost(undefined);
-        setLifetime(undefined);
+        batch(() => {
+          setHost(undefined);
+          setLifetime(undefined);
+        });
         if (hosted) void visitor.refetch();
-      });
+      }
+    }
   }
 
+  const status = () => {
+    const current = host();
+    if (unavailable() && (current === undefined || current.type === "waiting"))
+      return "No host is serving the site right now.";
+    if (!canVolunteer() && current?.type === "waiting") return "Checking for a host…";
+    if (current !== undefined)
+      return current.type === "copying" && current.bootstrap
+        ? "Copying the site to this tab…"
+        : labels[current.type];
+    if (lifetime()) return "Loading hosting code…";
+    if (!props.bootstrap && !canVolunteer()) return "Checking for a host…";
+    return message() || "You can help keep it online.";
+  };
+
   return (
-    <main>
-      <h1>{bootstrap ? "start keepalive" : "can we keep this alive?"}</h1>
-      <p className="experiment-age">
+    <>
+      <p class="experiment-age">
         <span>alive for</span>
-        <strong>
-          {startedAt === null ? "00h 00m 00s" : startedAt === undefined ? "—" : age(startedAt, now)}
-        </strong>
+        <strong>{clockText()}</strong>
       </p>
-      {bootstrap ? (
-        <p>
-          Start the first host for <a href={`https://${fleet.site}`}>{fleet.site}</a> for up to{" "}
-          {label}. Keep this tab open to keep the site online.
-        </p>
-      ) : (
-        <>
-          <p>
-            This site is served from people's browsers. Visitors copy it from each other and take
-            15min turns keeping it online. If the last host stops, the site goes down.
-          </p>
-          {canVolunteer && lifetime === undefined && finished === undefined && !retry && (
-            <p>Click below to volunteer, then keep this tab open. You can stop anytime.</p>
-          )}
-        </>
-      )}
+      <Show
+        when={
+          !props.bootstrap &&
+          canVolunteer() &&
+          lifetime() === undefined &&
+          finished() === undefined &&
+          !retry()
+        }
+      >
+        <p>Click below to volunteer, then keep this tab open. You can stop anytime.</p>
+      </Show>
       <section aria-label="keepalive">
         <p role="status">
-          {unavailable && (host === undefined || host.type === "waiting") ? (
-            "No host is serving the site right now."
-          ) : !canVolunteer && host?.type === "waiting" ? (
-            "Checking for a host…"
-          ) : host === undefined ? (
-            alreadyHosting ? (
-              <>
-                Keepalive is already running.{" "}
-                <a href={`https://${fleet.site}`}>Visit the main site</a> to volunteer.
-              </>
-            ) : !bootstrap && !canVolunteer ? (
-              "Checking for a host…"
-            ) : (
-              message || "You can help keep it online."
-            )
-          ) : host.type === "copying" && host.bootstrap ? (
-            "Copying the site to this tab…"
-          ) : (
-            labels[host.type]
-          )}
+          <Show when={alreadyHosting()} fallback={status()}>
+            Keepalive is already running. <a href={`https://${fleet.site}`}>Visit the main site</a>{" "}
+            to volunteer.
+          </Show>
         </p>
-        {host?.type === "copying" && <CopyProgress received={host.received} total={host.total} />}
-        {hosting && (
-          <>
-            <p className="turn-countdown">
-              {countdown(hosting.endsAt, Math.max(now, hosting.since))} left in your turn
-            </p>
-            <div className="host-activity">
-              <div>
-                serving ~{hosting.localTabs.toLocaleString()} of ~{hosting.tabs.toLocaleString()}{" "}
-                {hosting.tabs === 1 ? "tab" : "tabs"}
-              </div>
-              <div className="request-line">
-                <span className="request-pulse" aria-hidden="true">
-                  {activity
-                    ? requestPulse(activity.pulse, activity.second, now)
-                    : "_".repeat(PULSE_SECONDS)}
-                </span>
-                <span>{pluralRequests(activity?.requests ?? 0)}</span>
-              </div>
-            </div>
-          </>
-        )}
-        {finished !== undefined && (
-          <>
-            <p>
-              {bootstrap || canVolunteer
-                ? `You can close this tab or ${bootstrap ? "host" : "volunteer"} again.`
-                : "You can close this tab."}
-            </p>
-            <p>{pluralRequests(finished)} handled</p>
-          </>
-        )}
+        <Show when={host()}>
+          <Suspense>
+            <TurnView host={host()} activity={activity()} now={now()} />
+          </Suspense>
+        </Show>
+        <Show when={finished() !== undefined}>
+          <p>
+            {props.bootstrap || canVolunteer()
+              ? `You can close this tab or ${props.bootstrap ? "host" : "volunteer"} again.`
+              : "You can close this tab."}
+          </p>
+          <p>{pluralRequests(finished() ?? 0)} handled</p>
+        </Show>
         <p>
-          {unavailable
+          {unavailable()
             ? "0 reachable hosts"
-            : hosts === 0
+            : hosts() === 0
               ? "— tabs · — hosts"
-              : `~${visitors.toLocaleString()} ${visitors === 1 ? "tab" : "tabs"} · ${hosts.toLocaleString()} ${hosts === 1 ? "host" : "hosts"}`}
+              : `~${visitors().toLocaleString()} ${visitors() === 1 ? "tab" : "tabs"} · ${hosts().toLocaleString()} ${hosts() === 1 ? "host" : "hosts"}`}
         </p>
-        {(hosting?.saturated ?? observed?.saturated) && <p>Some hosts aren’t shown.</p>}
-        <Hosts
-          key={hosting?.runID}
-          origin={hosting?.origin ?? observed?.host.origin}
-          now={now}
-          self={hosting?.runID}
-          focus={hosting?.runID ?? observed?.host.runID}
-        />
+        <Show when={hosting()?.saturated ?? observed()?.saturated}>
+          <p>Some hosts aren’t shown.</p>
+        </Show>
+        <Show when={treeTarget()}>
+          {(target) => (
+            <details
+              class="host-details"
+              onToggle={(event) => setTreeOpen(event.currentTarget.open)}
+            >
+              <summary>hosts</summary>
+              <Show when={treeOpen()}>
+                <HostPanel
+                  origin={target().origin}
+                  focus={target().focus}
+                  self={hosting()?.runID}
+                  now={now()}
+                />
+              </Show>
+            </details>
+          )}
+        </Show>
       </section>
-      <div className="actions">
-        {alreadyHosting ? null : lifetime === undefined ? (
-          (bootstrap || canVolunteer) && (
-            <button type="button" onClick={start}>
-              {retry
-                ? "try again"
-                : finished !== undefined
-                  ? bootstrap
-                    ? "host again"
-                    : "volunteer again"
-                  : bootstrap
-                    ? "start hosting"
-                    : "i'll keep it alive"}
+      <div class="actions">
+        <Show when={!alreadyHosting()}>
+          <Show
+            when={lifetime()}
+            fallback={
+              <Show when={props.bootstrap || canVolunteer()}>
+                <button type="button" onClick={() => void start()}>
+                  {retry()
+                    ? "try again"
+                    : finished() !== undefined
+                      ? props.bootstrap
+                        ? "host again"
+                        : "volunteer again"
+                      : props.bootstrap
+                        ? "start hosting"
+                        : "i'll keep it alive"}
+                </button>
+              </Show>
+            }
+          >
+            <button
+              type="button"
+              onClick={() => lifetime()?.abort()}
+              disabled={host()?.type === "stopping"}
+            >
+              stop
             </button>
-          )
-        ) : (
-          <button
-            type="button"
-            onClick={() => lifetime.abort()}
-            disabled={host?.type === "stopping"}
-          >
-            stop
-          </button>
-        )}
-        {lifetime !== undefined && (
-          <button
-            className="text-action"
-            type="button"
-            onClick={toggleSound}
-            aria-pressed={sound}
-            title="Play an invitation sound in the background and a warning each minute in the final five minutes"
-          >
-            sound: {sound ? "on" : "off"}
-          </button>
-        )}
+            <button
+              class="text-action"
+              type="button"
+              onClick={toggleSound}
+              aria-pressed={sound()}
+              title="Play an invitation sound in the background and a warning each minute in the final five minutes"
+            >
+              sound: {sound() ? "on" : "off"}
+            </button>
+          </Show>
+        </Show>
       </div>
-      <footer>
-        an experiment from <a href="https://tnl.dev">tnl.dev</a> ·{" "}
-        <a href="https://tnl.dev/blog/keepalive">how it works</a> ·{" "}
-        <a href="https://github.com/tnldotdev/tnl/tree/main/demos/keepalive">source</a>
-      </footer>
-    </main>
-  );
-}
-
-function CopyProgress({ received, total }: { received: number; total: number }) {
-  const filled = Math.floor((received / total) * 20);
-  const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
-  return (
-    <p
-      className="copy-progress"
-      role="progressbar"
-      aria-label="Downloading hosting files"
-      aria-valuemin={0}
-      aria-valuemax={total}
-      aria-valuenow={received}
-    >
-      <span aria-hidden="true">
-        [{"#".repeat(filled)}
-        {"-".repeat(20 - filled)}]
-      </span>{" "}
-      {mb(received)} / {mb(total)} MB
-    </p>
+    </>
   );
 }
 
 const root = document.getElementById("app");
-if (root !== null)
-  createRoot(root).render(
-    <QueryClientProvider client={new QueryClient()}>
-      <App bootstrap={root.hasAttribute("data-start")} />
-    </QueryClientProvider>,
-  );
+if (root !== null) {
+  const client = new QueryClient();
+  render(() => {
+    onCleanup(() => client.clear());
+    return (
+      <QueryClientProvider client={client}>
+        <App bootstrap={root.hasAttribute("data-start")} />
+      </QueryClientProvider>
+    );
+  }, root);
+}

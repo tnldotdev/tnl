@@ -2,7 +2,7 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { credentials, type CredentialBindings } from "../src/edge/credentials.ts";
 import { READY_HEADER } from "../src/enrollment.ts";
-import { HOST_PARENT } from "../src/peers/gossip.ts";
+import { HOST_PARENT } from "../src/peers/host.ts";
 import { NO_HOST_HEADER } from "../src/network.ts";
 
 const id = (prefix: string, suffix = "a") => `${prefix}_${suffix.repeat(22)}`;

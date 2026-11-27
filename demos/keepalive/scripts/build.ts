@@ -1,9 +1,13 @@
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { build } from "esbuild";
+import { build, type BuildOptions } from "esbuild";
 import { build as buildPage } from "vite";
 import { parseArgs } from "node:util";
-import { WASM_PATH, WORKER_PATH, digest, parseRelease, type Asset } from "../src/release.ts";
+import { WASM_PATH, WORKER_PATH } from "../src/release.ts";
+import { hostWordsEsbuild } from "./host-words.ts";
+import { siteRelease } from "./release.ts";
+import { startPage } from "./page.ts";
+import { fleets } from "../src/fleets.ts";
 
 const demo = path.resolve(import.meta.dirname, "..");
 const { values } = parseArgs({ options: { fleet: { type: "string", default: "prod" } } });
@@ -13,7 +17,13 @@ const dist = path.join(demo, values.fleet === "prod" ? "dist" : "dist-ramp");
 const define = { KEEPALIVE_FLEET: JSON.stringify(values.fleet) };
 const output = path.join(dist, "site");
 const wasm = path.join(demo, "../../packages/ts/dist/wasm/publisher.wasm");
-const options = { absWorkingDir: demo, bundle: true, format: "esm", minify: true } as const;
+const options = {
+  absWorkingDir: demo,
+  bundle: true,
+  format: "esm",
+  minify: true,
+  plugins: [hostWordsEsbuild],
+} satisfies BuildOptions;
 
 await buildPage({
   configFile: path.join(demo, "vite.config.ts"),
@@ -21,7 +31,7 @@ await buildPage({
   define,
 });
 const index = await readFile(path.join(output, "index.html"), "utf8");
-await writeFile(path.join(output, "start.html"), index.replace('id="app"', 'id="app" data-start'));
+await writeFile(path.join(output, "start.html"), startPage(index, fleets[values.fleet].site));
 await mkdir(path.join(output, "hosting/wasm"), { recursive: true });
 await Promise.all([
   build({
@@ -43,16 +53,7 @@ await Promise.all([
   copyFile(wasm, path.join(output, WASM_PATH)),
 ]);
 
-const assets = await Promise.all(
-  ["/app.js", "/index.html", "/index.css", "/favicon.svg", WORKER_PATH, WASM_PATH].map(
-    async (file): Promise<Asset> => {
-      const bytes = await readFile(path.join(output, file));
-      return { path: file, size: bytes.byteLength, sha256: await digest(bytes) };
-    },
-  ),
-);
-const id = await digest(new TextEncoder().encode(JSON.stringify(assets)));
-const release = await parseRelease({ id, assets });
+const release = await siteRelease(output);
 await writeFile(path.join(dist, "release.json"), JSON.stringify(release) + "\n");
 await build({
   ...options,

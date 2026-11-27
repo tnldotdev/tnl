@@ -1,4 +1,4 @@
-import { runIDSchema } from "../peers/gossip.ts";
+import { runIDSchema } from "../peers/host.ts";
 
 const maxErrorBytes = 4_096;
 

@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/gossip.ts";
+import { HOST_PARENT, hostOrigin, type Host } from "../src/peers/host.ts";
 import { ARTIFACT_PREFIX, readAssetResponse, type Asset, type Release } from "../src/release.ts";
 
 export type RecordSample = (event: string, fields: Record<string, unknown>) => void;

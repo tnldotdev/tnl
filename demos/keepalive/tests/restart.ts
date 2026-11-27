@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BrowserContext } from "playwright";
 import { noReachableHost } from "../src/network.ts";
-import { PEERS_PATH, type Host } from "../src/peers/gossip.ts";
+import { PEERS_PATH, type Host } from "../src/peers/host.ts";
 import { readPeers } from "../src/peers/http.ts";
 import { MAX_MANIFEST_BYTES, RELEASE_PATH, parseRelease, readJSON } from "../src/release.ts";
 import { observeTurn } from "./browser-samples.ts";

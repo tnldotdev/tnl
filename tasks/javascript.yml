@@ -37,7 +37,7 @@ tasks:
       - pnpm test:coverage
 
   test:browser:
-    desc: Test the embedded feedback toolbar in installed Google Chrome
+    desc: Test the feedback toolbar and Keepalive page in installed Google Chrome
     cmds:
       - pnpm exec vitest run --config vitest.browser.config.ts
 
@@ -76,6 +76,11 @@ tasks:
     desc: Check the Keepalive proxy and host commands
     cmds:
       - pnpm exec vitest run demos/keepalive/tests
+
+  keepalive:test:browser:
+    desc: Check the production Keepalive page in Chrome with local protocol fixtures
+    cmds:
+      - pnpm exec vitest run --config vitest.browser.config.ts demos/keepalive/tests/page.browser.test.ts
 
   keepalive:restart:
     desc: Check certificate reuse after restarting Chrome on the empty ramp fleet

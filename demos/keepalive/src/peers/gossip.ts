@@ -1,19 +1,19 @@
-import * as z from "zod";
+import * as z from "zod/mini";
 import { hostNameSchema } from "./host-names.ts";
-import { BOOTSTRAP_TURN_MS, INVITATION_ACK_MS, REPLACE_BEFORE_MS, STARTUP_MS } from "../policy.ts";
-import { MAX_TABS_PER_HOST, REMOTE_TAB_REPORT_MS, SAMPLE_WEIGHT } from "./presence.ts";
+import { INVITATION_ACK_MS, REPLACE_BEFORE_MS } from "../policy.ts";
+import { REMOTE_TAB_REPORT_MS } from "./presence.ts";
 import { certificateReport, newerCertificate } from "../hosting/certificate.ts";
-import { fleet } from "../fleets.ts";
-
-export const HOST_PARENT: string = fleet.parent;
-export const SHARED_HOST = `https://site.${HOST_PARENT}`;
-export const PEERS_PATH = "/__keepalive/peers";
-export const MAX_MESSAGE_BYTES = 24 * 1024;
-export const MAX_PEERS = 8_192;
-export const MAX_CHANGES = 40;
+import { type Host, sameRun, hostIdentity } from "./host.ts";
+import {
+  MAX_PEERS,
+  MAX_CHANGES,
+  FRESH_REPORT_MS,
+  reportedHost,
+  peerReport,
+  validReport,
+} from "./report.ts";
 const MAX_HOST_HISTORY = 128;
 export const PROBE_MS = 2_000;
-export const FRESH_REPORT_MS = 60_000;
 export const SUSPECT_MS = 15_000;
 export const KEEP_MS = 5 * 60_000;
 const PRIORITY_CHANGES = 8;
@@ -21,71 +21,18 @@ const PRIORITY_SENDS = 3;
 const FRESH_CHANGES = 8;
 const FRESH_QUEUE_LIMIT = 128;
 const COOLDOWN_MS = 30_000;
-const EARLIEST_START = Date.UTC(2026, 0, 1);
-export const releaseIDSchema = z.string().regex(/^[a-f0-9]{64}$/);
-export const runIDSchema = z.string().regex(/^srun_[A-Za-z0-9]{22}$/);
-export const httpsOriginSchema = z
-  .string()
-  .max(261)
-  .refine((value) => {
-    const url = URL.parse(value);
-    return url?.protocol === "https:" && url.origin === value;
-  });
-export const hostSchema = z.object({
-  origin: httpsOriginSchema,
-  publisherID: z.string().regex(/^pub_[A-Za-z0-9]{22}$/),
-  runID: runIDSchema,
-  runNumber: z
-    .string()
-    .regex(/^[1-9]\d{0,18}$/)
-    .refine((value) => value.length < 19 || value <= "9223372036854775807"),
+import { HOST_PARENT, runIDSchema } from "./host.ts";
+const changeSchema = z.extend(reportedHost, {
+  name: z.optional(hostNameSchema),
+  copyFrom: z.optional(runIDSchema),
+  certificate: z.optional(certificateReport),
 });
-const changeSchema = hostSchema.extend({
-  seq: z.int().positive(),
-  reportedAt: z.int().positive(),
-  left: z.boolean(),
-  startingUntil: z.int().nonnegative(),
-  name: hostNameSchema.optional(),
-  endsAt: z.int().positive().optional(),
-  departing: z.boolean().optional(),
-  tabs: z
-    .strictObject({
-      count: z
-        .int()
-        .min(0)
-        .max(MAX_TABS_PER_HOST * SAMPLE_WEIGHT),
-      observedAt: z.int().positive(),
-    })
-    .optional(),
-  copyFrom: runIDSchema.optional(),
-  certificate: certificateReport.optional(),
-});
-const startTimeSchema = z.int().min(EARLIEST_START);
-export const audienceSchema = z.strictObject({
-  tabs: z
-    .int()
-    .min(0)
-    .max((MAX_PEERS + 1) * MAX_TABS_PER_HOST * SAMPLE_WEIGHT),
-  hosts: z
-    .int()
-    .min(1)
-    .max(MAX_PEERS + 1),
-  saturated: z.boolean(),
-  sampling: z.boolean(),
-});
-const messageSchema = z.strictObject({
-  releaseID: releaseIDSchema,
-  startedAt: startTimeSchema,
-  from: changeSchema,
-  changes: z.array(changeSchema).max(MAX_CHANGES),
-  audience: audienceSchema.optional(),
-});
-export type Host = Readonly<z.infer<typeof hostSchema>>;
+const messageSchema = peerReport(changeSchema);
 export type Change = Readonly<z.infer<typeof changeSchema>>;
 export type HostHistory = Pick<Change, "runID" | "name" | "endsAt" | "copyFrom" | "left"> & {
   unreachable?: boolean | undefined;
 };
-export const hostDetailsSchema = changeSchema.pick({
+export const hostDetailsSchema = z.pick(changeSchema, {
   name: true,
   endsAt: true,
   departing: true,
@@ -101,20 +48,6 @@ export type PeerTransport = (
   helper?: Host,
 ) => Promise<GossipMessage | undefined>;
 
-export function hostOrigin(value: unknown, parent = HOST_PARENT): value is string {
-  if (typeof value !== "string" || value.length > 261) return false;
-  const url = URL.parse(value);
-  if (url?.protocol !== "https:" || url.origin !== value || url.port !== "") return false;
-  if (!url.hostname.endsWith(`.${parent}`)) return false;
-  return /^p-[a-z2-7]{26}$/.test(url.hostname.slice(0, -(parent.length + 1)));
-}
-
-export function parseHost(value: unknown, parent = HOST_PARENT): Host | undefined {
-  const parsed = hostSchema.safeParse(value);
-  if (parsed.success && hostOrigin(parsed.data.origin, parent)) return parsed.data;
-  return undefined;
-}
-
 export function parseMessage(
   value: unknown,
   releaseID: string,
@@ -122,33 +55,8 @@ export function parseMessage(
   parent = HOST_PARENT,
 ): GossipMessage | undefined {
   const parsed = messageSchema.safeParse(value);
-  if (
-    !parsed.success ||
-    parsed.data.releaseID !== releaseID ||
-    parsed.data.startedAt > now + 30_000
-  )
-    return;
-  const valid = (change: Change) =>
-    hostOrigin(change.origin, parent) &&
-    change.reportedAt <= now + 30_000 &&
-    change.startingUntil <= now + STARTUP_MS + 30_000 &&
-    (change.endsAt === undefined || change.endsAt <= now + BOOTSTRAP_TURN_MS + 30_000) &&
-    (change.tabs === undefined || change.tabs.observedAt <= now + 30_000);
-  if (valid(parsed.data.from) && parsed.data.changes.every(valid)) return parsed.data;
+  if (parsed.success && validReport(parsed.data, releaseID, now, parent)) return parsed.data;
   return undefined;
-}
-
-export function sameRun(a: Host, b: Host): boolean {
-  return (
-    a.publisherID === b.publisherID &&
-    a.origin === b.origin &&
-    a.runID === b.runID &&
-    a.runNumber === b.runNumber
-  );
-}
-
-export function hostIdentity({ origin, publisherID, runID, runNumber }: Host): Host {
-  return { origin, publisherID, runID, runNumber };
 }
 
 type Seen = { change: Change; slot: number; suspectAt?: number };
