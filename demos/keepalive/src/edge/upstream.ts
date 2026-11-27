@@ -31,6 +31,8 @@ async function errorBody(response: Response, signal: AbortSignal) {
     }
     if (length === 0) return "empty";
     const text = new TextDecoder().decode(bytes.subarray(0, length));
+    if (text.trim() === "service HTTP authorization is unavailable; retry")
+      return "tnl_authorization";
     if (/\bcloudflare\b/i.test(text)) return "cloudflare";
     if (/\bupstream connect error\b|\bno healthy upstream\b/i.test(text)) return "proxy_error";
     return "other";
@@ -53,6 +55,8 @@ export async function upstreamFailure(response: Response, signal: AbortSignal) {
     server: boundedHeader(headers, "Server", /^(?:cloudflare(?:-nginx)?|envoy|nginx)$/i),
     cfErrorType: boundedHeader(headers, "CF-Error-Type", /^[a-z0-9_-]{1,48}$/i),
     cfErrorOrigin: boundedHeader(headers, "CF-Error-Origin", /^[a-z0-9_.-]{1,48}$/i),
+    visitorConnectionID: boundedHeader(headers, "X-Keepalive-Ramp-Visitor", /^vc_[a-z0-9]{22}$/i),
+    capacityFailure: boundedHeader(headers, "X-Keepalive-Ramp-Capacity", /^[a-z0-9_]{1,48}$/i),
     body: await errorBody(response, signal),
   };
 }

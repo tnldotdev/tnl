@@ -57,6 +57,8 @@ production builds.
 On upstream `5xx` responses, the trace also records the upstream Ray ID,
 `Tnl-Error-Code`, Cloudflare error headers, and whether a ramp browser marked
 the response. It reports an error body category without logging the body.
+When a diagnostic browser build provides a visitor connection ID, the trace
+also includes it for matching the ingress and relay logs.
 
 For volunteer admissions on ramp, capture `keepalive_donor_upload` from the
 inviter's browser console. It records the exact inviter run, bytes received,
