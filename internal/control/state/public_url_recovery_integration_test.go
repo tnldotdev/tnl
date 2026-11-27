@@ -74,11 +74,14 @@ func TestIntegrationServiceRecovery(t *testing.T) {
 	wantSeconds := observedAt.Sub(openedAt).Seconds()
 	ref := ServiceRunReference{ServiceID: f.service.ID, RunID: f.run.RunID, RunNumber: f.run.RunNumber}
 	observation, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, evidence, observedAt)
-	if err != nil || observation.ObservedSeconds != wantSeconds {
+	if err != nil || observation.ObservedSeconds != wantSeconds || !observation.NewlyObserved {
 		t.Fatalf("recovery observation = %#v, %v", observation, err)
 	}
+	// a replay returns the same measurement, but must not log the transition again.
+	wantReplay := observation
+	wantReplay.NewlyObserved = false
 	repeated, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor, uint64(recoveryEpisodeID), observedAt, evidence, observedAt.Add(time.Second))
-	if err != nil || !reflect.DeepEqual(repeated, observation) {
+	if err != nil || !reflect.DeepEqual(repeated, wantReplay) {
 		t.Fatalf("observation replay = %#v, %v", repeated, err)
 	}
 	// several ingress deliveries may race, or retry after a committed reply was
@@ -88,7 +91,7 @@ func TestIntegrationServiceRecovery(t *testing.T) {
 		go func() {
 			got, err := database.ObserveServiceRecovery(t.Context(), ingress.IngressLeaseIdentity, ref, visitor,
 				uint64(recoveryEpisodeID), observedAt, evidence, observedAt.Add(2*time.Second))
-			if err == nil && !reflect.DeepEqual(got, observation) {
+			if err == nil && !reflect.DeepEqual(got, wantReplay) {
 				err = errors.New("replay changed the committed recovery")
 			}
 			concurrent <- err
