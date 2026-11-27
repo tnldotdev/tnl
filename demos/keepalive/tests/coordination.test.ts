@@ -59,6 +59,8 @@ it("uses normal turn lengths and real invitation decisions in turnover", async (
   expect(result.departures).toBeGreaterThan(0);
   expect(result.earlyRetirements).toBeGreaterThan(0);
   expect(result.samples.at(-1)?.online).toBeGreaterThanOrEqual(3);
+  expect(result.harness.retiredViewsRetained).toBe(0);
+  for (const sample of result.samples) expect(sample.retainedViews).toBe(sample.online);
 });
 
 it("rejects unbounded or invalid settings", async () => {
@@ -100,4 +102,13 @@ it("recruits for offered byte demand even when the reader population is small", 
   expect(result.outcome).toBe("completed");
   expect(result.joins).toBeGreaterThanOrEqual(20);
   expect(result.samples.at(-1)?.hostTargets.p50).toBeGreaterThanOrEqual(19);
+});
+
+it("records checkpoints as the virtual run advances, not only at completion", async () => {
+  const checkpoints: number[] = [];
+  const result = await simulateCoordination(settings, (sample) => {
+    checkpoints.push(sample.elapsedMs);
+  });
+  expect(checkpoints).toEqual(result.samples.map((sample) => sample.elapsedMs));
+  expect(checkpoints.length).toBeGreaterThan(1);
 });

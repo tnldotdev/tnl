@@ -116,6 +116,11 @@ tasks:
     cmds:
       - node demos/keepalive/scripts/check-coordination.ts --hosts "{{.HOSTS}}" --minutes "{{.MINUTES}}" --seed "{{.SEED}}" --scenario "{{.SCENARIO}}" --latency-ms "{{.LATENCY_MS}}" --loss "{{.LOSS}}" --discovery "{{.DISCOVERY}}" --departure "{{.DEPARTURE}}" --policy "{{.POLICY}}" {{if .SAFE_BYTES_PER_HOST}}--safe-bytes-per-host "{{.SAFE_BYTES_PER_HOST}}"{{end}} {{if .READER_BYTES_PER_SECOND}}--reader-bytes-per-second "{{.READER_BYTES_PER_SECOND}}"{{end}} {{if .REPORT}}--report "{{.REPORT}}"{{end}}
 
+  keepalive:coordination:check:
+    desc: Check complete and memory-bounded coordination reports without external services
+    cmds:
+      - node demos/keepalive/tests/coordination-check.ts
+
   keepalive:load:readers:
     desc: Opt-in bounded reader/connection load on an existing ramp fleet (no fleet ownership)
     requires:

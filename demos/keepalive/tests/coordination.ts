@@ -4,6 +4,7 @@ import { MAX_MESSAGE_BYTES } from "../src/peers/report.ts";
 import { HOST_TURN_MS, REPLACE_BEFORE_MS, hostTarget } from "../src/policy.ts";
 import { distribution } from "./measure.ts";
 import { capacityTarget } from "./recruitment.ts";
+import { getHeapStatistics } from "node:v8";
 
 export type CoordinationScenario = "growth" | "loss" | "partition" | "turnover";
 export type CoordinationSettings = {
@@ -83,7 +84,7 @@ export function seededRandom(seed: number) {
 type Node = {
   index: number;
   host: Host;
-  view: Gossip;
+  view: Gossip | null;
   online: boolean;
   leaving: boolean;
   readers: number;
@@ -108,7 +109,13 @@ export type CoordinationSample = {
   observedReady: ReturnType<typeof viewDistribution>;
   observedStarting: ReturnType<typeof viewDistribution>;
   observedDeficit: ReturnType<typeof viewDistribution>;
+  retainedViews: number;
 };
+
+function ownedView(node: Node) {
+  if (node.view === null) throw new Error("simulation accessed a retired host's gossip owner");
+  return node.view;
+}
 
 function viewDistribution(values: readonly number[]) {
   const ordered = [...values].sort((a, b) => a - b);
@@ -121,7 +128,10 @@ function viewDistribution(values: readonly number[]) {
   };
 }
 
-export async function simulateCoordination(settings: CoordinationSettings) {
+export async function simulateCoordination(
+  settings: CoordinationSettings,
+  record?: (sample: CoordinationSample) => void,
+) {
   if (
     !Number.isInteger(settings.hosts) ||
     settings.hosts < 3 ||
@@ -152,7 +162,12 @@ export async function simulateCoordination(settings: CoordinationSettings) {
   const base = Date.UTC(2026, 10, 27);
   const releaseID = "a".repeat(64);
   let stopAt = base + settings.durationMs;
-  let outcome: "completed" | "recruitment_limit" = "completed";
+  let outcome: "completed" | "recruitment_limit" | "harness_memory_limit" = "completed";
+  const heapLimitBytes = getHeapStatistics().heap_size_limit;
+  // leave room for old-space pressure, young generations, and recording a
+  // complete failed result. V8 can exhaust old space below heap_size_limit.
+  const heapStopBytes = Math.floor(heapLimitBytes * 0.5);
+  let eventCount = 0;
   const events = new Events();
   const random = seededRandom(settings.seed);
   const nodes: Node[] = [];
@@ -197,7 +212,7 @@ export async function simulateCoordination(settings: CoordinationSettings) {
   }
 
   function target(node: Node) {
-    const tabs = node.view.tabs(now);
+    const tabs = ownedView(node).tabs(now);
     if (settings.policy !== "capacity") return hostTarget(tabs);
     // synthetic offered load follows this fixture's reader population. the live
     // system needs real load reports before it can use the candidate policy.
@@ -255,8 +270,8 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       if (!canSend() || random() < settings.loss) return;
       events.add(now + travel, () => {
         if (completed || !canSend()) return;
-        to.view.receive(outbound, now);
-        const reply = wire(to.view.message(now, outbound));
+        ownedView(to).receive(outbound, now);
+        const reply = wire(ownedView(to).message(now, outbound));
         if (random() < settings.loss) return;
         events.add(now + travel, () => {
           if (canSend()) finish(reply);
@@ -294,8 +309,8 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     if (index < settings.hosts) introduced++;
     allocateReaders();
     if (donor?.online) {
-      node.view.receive(donor.view.message(now), now);
-      donor.view.receive(node.view.message(now), now);
+      ownedView(node).receive(ownedView(donor).message(now), now);
+      ownedView(donor).receive(ownedView(node).message(now), now);
     }
     joins++;
     events.add(now + Math.floor(random() * PROBE_MS), () => tick(node));
@@ -318,8 +333,8 @@ export async function simulateCoordination(settings: CoordinationSettings) {
         failedDiscoveryRequests++;
         return;
       }
-      const report = wire(selected.view.message(now), undefined, true);
-      if (report) node.view.receive(report, now);
+      const report = wire(ownedView(selected).message(now), undefined, true);
+      if (report) ownedView(node).receive(report, now);
       else failedDiscoveryRequests++;
     });
     events.add(now + 27_000 + Math.floor(random() * 6_000), () => discover(node));
@@ -329,6 +344,9 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     if (!node.online || node.leaving) return;
     const finish = () => {
       node.online = false;
+      // real browser shutdown releases its worker and roster. retain only the
+      // run metadata needed to reject stale traffic, not the dead gossip owner.
+      node.view = null;
       node.readers = 0;
       departures++;
       allocateReaders();
@@ -336,12 +354,12 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     if (graceful) {
       node.leaving = true;
       allocateReaders();
-      const message = node.view.leave(now);
+      const message = ownedView(node).leave(now);
       // mirror peerServer.stop's three finite final reports and shared deadline.
       const hosts =
         settings.departure === "insertion"
-          ? node.view.hosts(now).slice(0, 3)
-          : node.view.departurePeers(now, node.replacement?.host);
+          ? ownedView(node).hosts(now).slice(0, 3)
+          : ownedView(node).departurePeers(now, node.replacement?.host);
       if (hosts.length) {
         const task = Promise.all(
           hosts.map((target) => send(node, target, message, undefined, 1_000)),
@@ -358,12 +376,13 @@ export async function simulateCoordination(settings: CoordinationSettings) {
 
   function tick(node: Node) {
     if (!node.online || node.leaving || now >= stopAt) return;
+    const view = ownedView(node);
     const departing = now >= node.endsAt - REPLACE_BEFORE_MS;
-    node.view.update({ departing });
+    view.update({ departing });
     // a fixed reader population is redistributed on membership changes. real
     // leases, reader movement, and sampling have separate tests.
-    node.view.observeTabs(node.readers, now);
-    const task = node.view
+    view.observeTabs(node.readers, now);
+    const task = view
       .probe(
         () => now,
         random,
@@ -377,20 +396,15 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     if (settings.scenario === "turnover" && now >= startsAfter) {
       // model an available volunteer polling this donor. startup/confirmation is
       // an explicit 30 s fixture, not a measured browser or control operation.
-      const offered = node.view.maybeStart(
-        now,
-        target(node),
-        () => !node.pendingReplacement,
-        random,
-      );
+      const offered = view.maybeStart(now, target(node), () => !node.pendingReplacement, random);
       if (offered) {
         invitations++;
         node.pendingReplacement = true;
-        node.view.confirmStart(now + 180_000);
+        view.confirmStart(now + 180_000);
         events.add(now + 30_000, () => {
           node.pendingReplacement = false;
-          node.view.finishStart();
           if (!node.online || now >= stopAt) return;
+          ownedView(node).finishStart();
           node.replacement = start(nodes.length, node);
           if (departing || now >= node.endsAt - REPLACE_BEFORE_MS) {
             // peerServer retains its confirmation receipt for 12 s; the donor
@@ -421,14 +435,15 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     const starting: number[] = [];
     const deficits: number[] = [];
     for (const node of live) {
-      const hosts = node.view.hosts(now);
+      const view = ownedView(node);
+      const hosts = view.hosts(now);
       coverage.push((1 + hosts.filter((host) => identities.has(host.runID)).length) / live.length);
       stale.push(hosts.filter((host) => !identities.has(host.runID)).length);
-      const tabs = node.view.tabs(now);
+      const tabs = view.tabs(now);
       audience.push(tabs);
       freshAudience.push(tabs / (introduced * 50));
       const desired = target(node);
-      const available = node.view.readyBeyondWindow(now, hosts);
+      const available = view.readyBeyondWindow(now, hosts);
       const pendingStarts =
         Number(node.pendingReplacement) + hosts.filter((host) => host.startingUntil > now).length;
       targets.push(desired);
@@ -436,7 +451,7 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       starting.push(pendingStarts);
       deficits.push(Math.max(0, desired - available - pendingStarts));
     }
-    samples.push({
+    const snapshot: CoordinationSample = {
       elapsedMs: now - base,
       online: live.length,
       joins,
@@ -454,12 +469,16 @@ export async function simulateCoordination(settings: CoordinationSettings) {
       observedReady: viewDistribution(ready),
       observedStarting: viewDistribution(starting),
       observedDeficit: viewDistribution(deficits),
-    });
+      retainedViews: nodes.filter((node) => node.view !== null).length,
+    };
+    samples.push(snapshot);
+    record?.(snapshot);
     if (now + 15_000 <= stopAt) events.add(now + 15_000, sample);
   }
 
   for (let i = 0; i < settings.hosts; i++)
     events.add(base + Math.floor((i / settings.hosts) * 60_000), () => {
+      if (now >= stopAt) return;
       const live = nodes.filter((node) => node.online);
       start(i, live[Math.floor(random() * live.length)]);
     });
@@ -484,6 +503,12 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     if (failures.length) throw new AggregateError(failures, "coordination simulation failed");
     if (nodes.length > settings.hosts * 8) {
       outcome = "recruitment_limit";
+      stopAt = now;
+      sample();
+      break;
+    }
+    if (++eventCount % 64 === 0 && getHeapStatistics().used_heap_size > heapStopBytes) {
+      outcome = "harness_memory_limit";
       stopAt = now;
       sample();
       break;
@@ -537,6 +562,12 @@ export async function simulateCoordination(settings: CoordinationSettings) {
     invitations,
     earlyRetirements,
     abruptlyLost: faulted.size,
+    harness: {
+      heapLimitBytes,
+      heapStopBytes,
+      retainedViews: nodes.filter((node) => node.view !== null).length,
+      retiredViewsRetained: nodes.filter((node) => !node.online && node.view !== null).length,
+    },
     samples,
   };
 }

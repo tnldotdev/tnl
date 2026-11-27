@@ -117,6 +117,15 @@ safety limit retains a partial report and exits unsuccessfully. Failure counts
 include dead-peer probes; they are not page-load failures.
 JSON totals count serialized attempts and replies, including requests that a
 virtual link cannot deliver. They are not measured wire bytes or provider egress.
+With `REPORT`, the task also writes `REPORT.checkpoints.ndjson` as each sample is
+taken, so a crash does not erase all observations. An `end` record is required to
+call a checkpoint stream complete. The simulator releases retired gossip owners
+and stops with a failed partial report around 50% of its V8 heap limit, leaving
+room for old-space pressure and recording the result.
+A `harness_memory_limit` outcome is a generator bound, not server or browser
+capacity evidence.
+Run `mise exec -- task js:keepalive:coordination:check` to check complete reports
+and failed memory-bounded reports in separate low-heap processes.
 
 Reader placement is an explicit fixture: 50 readers per initial host, instantly
 redistributed as membership changes. It does not model lease expiration or

@@ -92,7 +92,7 @@ function emit(event: string, fields: Record<string, unknown>) {
   const row = JSON.stringify({ schema: 1, run, at: Date.now(), stage, event, ...fields }) + "\n";
   events++;
   writes = writes.then(async () => {
-    await report.write(row);
+    await report.writeFile(row);
   });
   void writes.catch((error: unknown) => {
     failures.push(error);
