@@ -23,6 +23,7 @@ import (
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // AcceptPublic selects HTTP by inspected hostname on 443 and other protocols by
@@ -98,6 +99,11 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		outcome = observability.VisitorLookupUnavailable
 		return err
 	}
+	diagnostic := visitorDiagnosticFrom(ctx)
+	if diagnostic != nil {
+		diagnostic.span = trace.SpanContextFromContext(ctx)
+		diagnostic.ingressRun = lease.IngressRunId
+	}
 	setupDeadline := privateMinTime(time.Now().Add(p.config.OpenTimeout), privateMinTime(admission.deadline, lease.ServingUntil))
 	admission.deadline = setupDeadline
 	setup, finish := context.WithDeadline(ctx, setupDeadline)
@@ -105,7 +111,6 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 	stopSetup := context.AfterFunc(p.admissions, finish)
 	defer stopSetup()
 	selected, err := p.selectPublicRun(setup, lease, source, destination, hostname, admission)
-	diagnostic := visitorDiagnosticFrom(ctx)
 	if diagnostic != nil {
 		diagnostic.service, diagnostic.visitor = selected.serviceID, selected.visitorID
 		diagnostic.phase, diagnostic.denial = "selection", string(selected.denialReason)
@@ -279,10 +284,31 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		}, ConnectionSlot: uint8(relay.ConnectionSlot), RelayServiceID: relay.RelayServiceId, RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, RelayLeaseRevision: uint64(relay.RelayLeaseRevision), ServingUntil: relay.ServingUntil}
 		attemptCtx, stopAttempt := backendAttemptContext(setup, len(relays)-attempt)
 		attemptStarted := time.Now()
+		attemptUntil, _ := attemptCtx.Deadline()
 		backend, err := p.openPrivateRelay(attemptCtx, relay, header, proxy, initial, deadline, func(call context.Context) error {
 			return reserveCapacity(call, relay)
 		})
 		stopAttempt()
+		if diagnostic != nil {
+			a := RelayAttempt{RelayID: relay.RelayId, RelayRunID: relay.RelayRunId, PublisherConnectionID: relay.PublisherConnectionId, Slot: relay.ConnectionSlot,
+				AssignmentRevision: relay.ConnectionAssignmentRevision,
+				Elapsed:            time.Since(attemptStarted), Budget: attemptUntil.Sub(attemptStarted), Err: err, Step: "open_relay", Committed: err == nil && len(initial) > 0}
+			var opening *tunnel.OpeningError
+			if errors.As(err, &opening) {
+				a.Committed = opening.Committed
+				diagnostic.sent = opening.VisitorBytes
+				if opening.Step != "" {
+					a.Step = opening.Step
+				}
+			} else if err == nil {
+				a.Step = "opened"
+				diagnostic.sent = int64(len(initial))
+			}
+			if diagnostic.last.Step != "" {
+				diagnostic.previous = append(diagnostic.previous, diagnostic.last)
+			}
+			diagnostic.last = a
+		}
 		if p.config.Observer != nil {
 			duration := time.Since(attemptStarted)
 			p.config.Observer.ObserveOperationContext(ctx, observability.OpIngressBackendAttempt, err, duration)
@@ -409,6 +435,7 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		<-done
 		if diagnostic != nil {
 			diagnostic.copyResult, diagnostic.cleanup = err, guardCleanup
+			diagnostic.sent, diagnostic.returned = int64(len(initial))+copied.LeftToRight, copied.RightToLeft
 		}
 		if p.config.Metrics != nil {
 			p.config.Metrics.AddForwardedBytes("visitor_to_publisher", copied.LeftToRight)
@@ -606,7 +633,7 @@ func (p *Server) openPrivateRelay(ctx context.Context, relay ingressv1.ServiceRe
 	// join setup cancellation before the successful stream enters live copying.
 	written, err := writeSetup(setup, connection, proxy, initial)
 	if err != nil {
-		return nil, &tunnel.OpeningError{Committed: written > 0, VisitorBytes: written, Err: errors.Join(err, connection.Close())}
+		return nil, &tunnel.OpeningError{Step: "write_visitor_setup", Committed: written > 0, VisitorBytes: written, Err: errors.Join(err, connection.Close())}
 	}
 	return connection, nil
 }

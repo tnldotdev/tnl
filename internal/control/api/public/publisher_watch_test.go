@@ -17,9 +17,61 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestPublisherWatchComparison503sShareOneLog(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		previous := log.Writer()
+		log.SetOutput(&output)
+		defer log.SetOutput(previous)
+		const secret = "do not log database text"
+		store := &failedComparisonStore{watchTestStore{err: errors.Join(
+			&controlstate.WatchComparisonFailure{Phase: "read_counters", Acquire: 2 * time.Millisecond, Work: 13 * time.Millisecond},
+			&pgconn.PgError{Code: "57P01", Message: secret},
+		)}}
+		watch := NewPublisherWatch(store)
+		h := testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil)
+		const body = `{"runs":[{"service_run_id":"` + publisherCORSRun + `","service_id":"` + publisherCORSService +
+			`","run_number":"1","run_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","connector_revision":"0"}]}`
+		var group sync.WaitGroup
+		responses := make([]*httptest.ResponseRecorder, 3)
+		for i := range responses {
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/publisher/watch", strings.NewReader(body))
+			r.Header.Set("Content-Type", "application/json")
+			responses[i] = httptest.NewRecorder()
+			group.Go(func() { h.ServeHTTP(responses[i], r) })
+		}
+		synctest.Wait()
+		watch.compare(t.Context())
+		group.Wait()
+		text := output.String()
+		if strings.Count(text, "\n") != 1 || !strings.Contains(text, "watch_batch_id=req_") ||
+			!strings.Contains(text, "sqlstate=57P01") || !strings.Contains(text, "waiters=3 scopes=1") || strings.Contains(text, secret) ||
+			!strings.Contains(text, "db_phase=read_counters pool_acquire_ms=2 db_work_ms=13") ||
+			strings.Contains(text, publisherCORSRun) || strings.Contains(text, "AAAAAAAAAAAAAAAA") {
+			t.Fatalf("unsafe or ungrouped watch log: %q", text)
+		}
+		ids := make(map[string]bool)
+		for _, w := range responses {
+			var p controlv1.Problem
+			if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusServiceUnavailable ||
+				p.Title != "publisher watch unavailable" || p.RequestId == "" || ids[p.RequestId] || !strings.Contains(text, p.RequestId) {
+				t.Fatalf("response lost its correlation: %d %s", w.Code, w.Body.String())
+			}
+			ids[p.RequestId] = true
+		}
+	})
+}
+
+type failedComparisonStore struct{ watchTestStore }
+
+func (*failedComparisonStore) AuthorizeConnectorPeerWatch(context.Context, string, string, int64, string, time.Time) error {
+	return nil
+}
 
 type watchTestStore struct {
 	batches   [][]controlstate.ConnectorPeerWatchVersion

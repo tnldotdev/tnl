@@ -67,12 +67,12 @@ func (c admissionRelayControl) DisconnectServicePublisherConnection(context.Cont
 
 // both hops use the real service-only relay acceptors and verified WSS/yamux.
 // control supplies one exact claim; no legacy publisher or forwarding adapter runs.
-func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
+func newAdmissionTransportFixture(t *testing.T, report ...func(error)) *admissionTransportFixture {
 	t.Helper()
 	material := newForwardingTestMaterial(t)
 	now := time.Now().UTC()
 	id := func(prefix string) string { return prefix + strings.Repeat("a", 22) }
-	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: id("svc_"), ServiceRunID: id("srun_"), RunNumber: 2,
+	ref := tunnelv1.ServicePublisherConnectionRef{ServiceID: id("svc_"), ServiceRunID: id("srun_"), RunNumber: 1,
 		PublisherConnectionID: id("pc_"), ConnectionAssignmentRevision: 3, RelayServiceID: "relay-service"}
 	lease := relayv1.RelayLease{RelayServiceId: ref.RelayServiceID, RelayId: "relay", RelayRunId: id("rr_"), RelayLeaseRevision: 4,
 		ProtocolVersion: 1, RelayAddress: "relay.test:443", TlsServerName: material.serverName, InternalRelayAddress: "127.0.0.1:9445",
@@ -123,13 +123,17 @@ func newAdmissionTransportFixture(t *testing.T) *admissionTransportFixture {
 	ingressAwait(t, ready)
 	f := &admissionTransportFixture{publisher: publisher, publisherServer: publisherServer, wire: transport, released: make(chan struct{}, 16)}
 	f.lease.Store(&lease)
-	forwarding, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{ServiceRegistry: registry,
+	forwardingConfig := relay.ForwardingAcceptorConfig{ServiceRegistry: registry,
 		CurrentLease: func() relayv1.RelayLease { return *f.lease.Load() }, ClusterSecrets: forwardingTestSecrets(t), StreamCapacity: 1,
 		StreamsDelta: func(delta int) {
 			if delta == -1 {
 				f.released <- struct{}{}
 			}
-		}})
+		}}
+	if len(report) > 0 {
+		forwardingConfig.Report = report[0]
+	}
+	forwarding, err := relay.NewForwardingAcceptor(forwardingConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

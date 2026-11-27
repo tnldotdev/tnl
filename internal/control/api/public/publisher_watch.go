@@ -3,17 +3,22 @@ package public
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	controlstate "github.com/tnldotdev/tnl/internal/control/state"
 	"github.com/tnldotdev/tnl/internal/failure"
+	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serverhttp"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -23,9 +28,17 @@ const (
 	publisherWatchWait      = 15 * time.Second
 	publisherWatchQuery     = time.Second
 	publisherWatchAuth      = 3 * time.Second
+	watchLogRequestIDs      = 128
 )
 
 var errPublisherWatchStopped = errors.New("publisher watch stopped")
+var watchUnbatchedLogBudget = rate.NewLimiter(4, 16)
+
+func reportUnbatchedWatchFailure(ctx context.Context, operation failure.Operation, id string, err error) {
+	if watchUnbatchedLogBudget.Allow() {
+		operatorlog.ReportContext(ctx, operation, failure.ServerAPIInternal, id, err)
+	}
+}
 
 type PublisherWatchStore interface {
 	AuthorizeConnectorPeerWatch(context.Context, string, string, int64, string, time.Time) error
@@ -48,8 +61,9 @@ type publisherWatchWaiter struct {
 }
 
 type publisherWatchResult struct {
-	changes []controlstate.ConnectorPeerWatchVersion
-	err     error
+	changes   []controlstate.ConnectorPeerWatchVersion
+	err       error
+	requestID string
 }
 
 func NewPublisherWatch(store PublisherWatchStore) *PublisherWatch {
@@ -114,6 +128,7 @@ func (watch *PublisherWatch) compare(ctx context.Context) {
 		batch = append(batch, scope)
 	}
 	current := make(map[string]controlstate.ConnectorPeerWatchVersion)
+	started := time.Now()
 	query, cancel := context.WithTimeout(ctx, publisherWatchQuery)
 	defer cancel()
 	var err error
@@ -129,24 +144,70 @@ func (watch *PublisherWatch) compare(ctx context.Context) {
 		}
 		batch = batch[count:]
 	}
+	if err != nil {
+		watch.comparisonFailed(ctx, waiters, len(seen), time.Since(started), err)
+		return
+	}
 	watch.mu.Lock()
 	defer watch.mu.Unlock()
 	for _, waiter := range waiters {
 		if _, live := watch.waits[waiter]; !live {
 			continue
 		}
-		result := publisherWatchResult{err: err}
-		if err == nil {
-			for _, scope := range waiter.seen {
-				if latest, found := current[scope.RunID]; found && (latest != scope || latest.Revision == -1) {
-					result.changes = append(result.changes, latest)
-				}
+		result := publisherWatchResult{}
+		for _, scope := range waiter.seen {
+			if latest, found := current[scope.RunID]; found && (latest != scope || latest.Revision == -1) {
+				result.changes = append(result.changes, latest)
 			}
 		}
-		if err != nil || len(result.changes) != 0 {
+		if len(result.changes) != 0 {
 			delete(watch.waits, waiter)
 			waiter.result <- result
 		}
+	}
+}
+
+func (watch *PublisherWatch) comparisonFailed(ctx context.Context, waiters []*publisherWatchWaiter, scopes int, elapsed time.Duration, err error) {
+	batchID := failureproblem.NewRequestID()
+	// prepare ids outside the wait lock. the request goroutines may be
+	// registering or canceling even while this batch is being reported.
+	reserved := make([]string, len(waiters))
+	for i := range reserved {
+		reserved[i] = failureproblem.NewRequestID()
+	}
+	ids := make([]string, 0, len(waiters))
+	watch.mu.Lock()
+	for i, waiter := range waiters {
+		if _, live := watch.waits[waiter]; !live {
+			continue
+		}
+		delete(watch.waits, waiter)
+		id := reserved[i]
+		ids = append(ids, id)
+		waiter.result <- publisherWatchResult{err: err, requestID: id}
+	}
+	watch.mu.Unlock()
+
+	fields := []slog.Attr{slog.String("watch_batch_id", batchID), slog.Int("waiters", len(ids)), slog.Int("scopes", scopes),
+		slog.Int64("elapsed_ms", elapsed.Milliseconds()), slog.String("cause", operatorlog.CauseClass(err))}
+	var comparison *controlstate.WatchComparisonFailure
+	if errors.As(err, &comparison) {
+		fields = append(fields, slog.String("db_phase", comparison.Phase), slog.Int64("pool_acquire_ms", comparison.Acquire.Milliseconds()), slog.Int64("db_work_ms", comparison.Work.Milliseconds()))
+	}
+	// group reserved response ids instead of repeating the same failure once
+	// per request. a waiter that disconnects may not send its reserved id.
+	first := true
+	for chunk := range slices.Chunk(ids, watchLogRequestIDs) {
+		link := slog.String("request_ids", strings.Join(chunk, ","))
+		if first {
+			first = false
+			operatorlog.ReportFields(ctx, "compare publisher watches", failure.ServerAPIInternal, "", err, append(fields, link)...)
+		} else {
+			operatorlog.Line(ctx, "publisher watch response ids", slog.String("watch_batch_id", batchID), link)
+		}
+	}
+	if first {
+		operatorlog.ReportFields(ctx, "compare publisher watches", failure.ServerAPIInternal, "", err, fields...)
 	}
 }
 
@@ -206,11 +267,13 @@ func watchAuthorizationProblem(request, auth context.Context, w http.ResponseWri
 	// publisher retry without treating database contention as a terminal fault.
 	if auth.Err() == context.DeadlineExceeded && failure.Only(operationErr, context.DeadlineExceeded) {
 		id := writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization timed out")
+		reportUnbatchedWatchFailure(request, failure.Operation(operation), id, operationErr)
 		reportRollback(id)
 		return
 	}
 	if !failed && errors.Is(err, controlstate.ErrPublisherWatchContended) {
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization temporarily unavailable")
+		id := writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch authorization temporarily unavailable")
+		reportUnbatchedWatchFailure(request, failure.Operation(operation), id, err)
 		return
 	}
 	serviceRunProblem(request, w, operation, err)
@@ -223,7 +286,8 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	watch := h.config.PublisherWatch
 	if watch == nil {
-		writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch unavailable")
+		id := writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch unavailable")
+		reportUnbatchedWatchFailure(r.Context(), "publisher watch not configured", id, errPublisherWatchStopped)
 		return
 	}
 	var body controlv1.PublisherWatchRequest
@@ -286,7 +350,13 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		result := watch.wait(r.Context(), seen)
 		if result.err != nil {
 			if r.Context().Err() == nil {
-				writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, "publisher watch unavailable")
+				const title = "publisher watch unavailable"
+				if result.requestID != "" {
+					failureproblem.WriteWithRequestID(w, result.requestID, http.StatusServiceUnavailable, string(controlv1.Unavailable), title, title, "")
+				} else {
+					id := writeProblem(w, http.StatusServiceUnavailable, controlv1.Unavailable, title)
+					reportUnbatchedWatchFailure(r.Context(), "publisher watch stopped", id, result.err)
+				}
 			}
 			return
 		}

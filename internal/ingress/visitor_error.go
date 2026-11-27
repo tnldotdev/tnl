@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // VisitorError preserves diagnostic scope without treating a rejected candidate
@@ -17,6 +20,38 @@ type VisitorError struct {
 	phase, denial         string
 	operation, copyResult error
 	cleanup, result       error
+	hello                 [16]byte
+	previous              []RelayAttempt
+	last                  RelayAttempt
+	span                  trace.SpanContext
+	ingressRun            string
+	sent, returned        int64
+}
+
+// RelayAttempt describes one actual opening, including a failed preferred relay
+// before fallback. duration excludes later copying and teardown.
+type RelayAttempt struct {
+	RelayID, RelayRunID, PublisherConnectionID string
+	Slot                                       int
+	AssignmentRevision                         int64
+	Elapsed, Budget                            time.Duration
+	Step                                       string
+	Committed                                  bool
+	Err                                        error
+}
+
+func (e *VisitorError) ClientHelloID() [16]byte        { return e.hello }
+func (e *VisitorError) SpanContext() trace.SpanContext { return e.span }
+func (e *VisitorError) IngressRunID() string           { return e.ingressRun }
+func (e *VisitorError) Forwarded() (int64, int64)      { return e.sent, e.returned }
+func (e *VisitorError) RelayAttempts() []RelayAttempt {
+	if e.last.Step == "" {
+		return nil
+	}
+	attempts := make([]RelayAttempt, len(e.previous)+1)
+	copy(attempts, e.previous)
+	attempts[len(e.previous)] = e.last
+	return attempts
 }
 
 func (*VisitorError) Error() string      { return "ingress: visitor connection failed" }

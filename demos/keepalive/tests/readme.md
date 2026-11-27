@@ -115,3 +115,18 @@ browser memory, relay load, and capacity rejections. Run multiple replacement
 cycles, a volunteer surge, slow transfers, and loss of either relay service.
 Count visitors separately from hosts. Configuration ceilings and simulations
 are not proof of real-browser throughput.
+
+### match a failure before HTTP
+
+For a Node probe that opens a fresh HTTPS connection, call `newVisitorProbeTag`
+from `connection-diagnostics.ts`. Pass its `ALPNProtocols` to `https.request`
+and keep `clientHelloId` with the transport timings if the probe fails. The
+publisher still negotiates HTTP/1.1. Do not reuse the tag or save raw TLS data.
+
+Search ingress logs for `client_hello_id`. On a match, use
+`visitor_connection_id` and `publisher_connection_id` to find the relay
+attempt and the browser's `publisher visitor` console line. The publisher logs
+errors and slow setup only, with a rate limit; a missing line does not prove
+the publisher saw nothing. An ingress failure before it reads the ClientHello
+cannot be matched this way. For a control watch `503`, search separately for
+its response `request_id` in `request_ids`.

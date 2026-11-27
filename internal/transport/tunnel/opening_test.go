@@ -82,7 +82,7 @@ func TestServiceOpeningMetadataFailureNeverClaimsVisitorCommit(t *testing.T) {
 		client.transport = cutOpeningTransport{Session: client.transport, count: n, failure: cause}
 		stream, err := client.OpenServiceForwardingStream(tunnelContext(t), serviceStreamHeader())
 		var opening *OpeningError
-		if stream != nil || !errors.As(err, &opening) || !errors.Is(err, cause) || opening.VisitorBytes != 0 || opening.Committed {
+		if stream != nil || !errors.As(err, &opening) || !errors.Is(err, cause) || opening.Step != "write_opening" || opening.VisitorBytes != 0 || opening.Committed {
 			t.Fatalf("cut %d incorrectly crossed visitor retry boundary: %+v", n, err)
 		}
 		if client.Err() != nil {
@@ -113,7 +113,7 @@ func TestServiceOpeningCancellationKeepsSessionUsable(t *testing.T) {
 		synctest.Wait()
 		err = await(t, opened)
 		var opening *OpeningError
-		if !errors.As(err, &opening) || !errors.Is(err, context.Canceled) || opening.Committed || opening.VisitorBytes != 0 {
+		if !errors.As(err, &opening) || !errors.Is(err, context.Canceled) || opening.Step != "wait_for_ack" || opening.Committed || opening.VisitorBytes != 0 {
 			t.Fatalf("canceled opening incorrectly crossed retry boundary: %v", err)
 		}
 		if client.Err() != nil || server.Err() != nil {

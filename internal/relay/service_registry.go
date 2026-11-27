@@ -15,6 +15,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type serviceConnection struct {
@@ -369,10 +370,17 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		}
 	}()
 	diagnostic := ForwardingError{
+		span:    trace.SpanContextFromContext(ctx),
 		service: incoming.Header.ServiceID, run: incoming.Header.ServiceRunID,
+		relay: incoming.Header.RelayID, relayRun: incoming.Header.RelayRunID, publisher: incoming.Header.PublisherConnectionID, step: "admit",
 		visitor: incoming.Header.VisitorConnectionID, number: incoming.Header.RunNumber, phase: "open",
+		slot: incoming.Header.ConnectionSlot, assignmentRevision: incoming.Header.ConnectionAssignmentRevision,
 	}
-	defer func() { retErr = diagnostic.finish(retErr) }()
+	if incoming.Header.PublicService != nil {
+		diagnostic.ingressRun = incoming.Header.PublicService.IngressRunID
+	}
+	started := time.Now()
+	defer func() { diagnostic.elapsed = time.Since(started); retErr = diagnostic.finish(retErr) }()
 	defer func() { diagnostic.cleanup = errors.Join(diagnostic.cleanup, incoming.Stream().Close()) }()
 	if !a.acquireStream() {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -391,6 +399,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		rejected = err
 		return incoming.Reject(tunnelv1.DrainingPublisherConnection)
 	}
+	diagnostic.step = "open_publisher_stream"
 	stream, err := connection.paths.session.OpenServiceForwardingStream(ctx, header)
 	publisher, err := connection.paths.finishOpen(stream, err)
 	if err != nil {
@@ -398,6 +407,7 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		return errors.Join(incoming.Reject(tunnelv1.Unavailable), err)
 	}
 	defer func() { diagnostic.cleanup = errors.Join(diagnostic.cleanup, publisher.Close()) }()
+	diagnostic.step = "register_capacity"
 	unregister, err := connection.paths.session.RegisterServiceCapacity(ctx, header, func(call context.Context) error {
 		current, valid := a.registry.candidate(header, a.currentLease(), a.now())
 		if !valid || current != connection {
@@ -421,10 +431,12 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.StaleConnectionAssignment}
 		return incoming.Reject(tunnelv1.StaleConnectionAssignment)
 	}
+	diagnostic.step = "ack_ingress"
 	if err := incoming.Accept(); err != nil {
 		return err
 	}
 	opened = true
+	diagnostic.acknowledged = time.Since(started)
 	finishOpen(nil)
 	endSpan(nil)
 	stop := context.AfterFunc(ctx, func() { _ = incoming.Stream().Close(); _ = publisher.Close() })
@@ -448,10 +460,12 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
 	diagnostic.phase = "copy"
+	diagnostic.step = "copy"
 	copyIngress, copyPublisher, observed := copyDiagnosticArguments(incoming.Stream(), publisher)
 	diagnostic.copyMethodsObserved = observed
 	copied, err := streamcopy.Copy(copyIngress, copyPublisher)
 	diagnostic.copyResult = err
+	diagnostic.sent, diagnostic.returned = copied.LeftToRight, copied.RightToLeft
 	finishForward(err)
 	if a.observer != nil {
 		a.observer.ObserveRelayTransfer(copied.LeftToRight, copied.RightToLeft, err)

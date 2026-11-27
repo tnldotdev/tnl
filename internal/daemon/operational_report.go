@@ -9,6 +9,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/ingress"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/relay"
 )
 
@@ -48,7 +49,8 @@ type causeNode struct {
 func (d *daemon) reportOperationalError(ctx context.Context, operation failure.Operation, reason failure.Reason, cause error) {
 	// the original report is unconditional and receives the original error.
 	// the observer runs afterward and receives only a detached safe projection.
-	logOperationalError(ctx, operation, reason, cause)
+	ctx, fields := forwardingLogFields(ctx, cause)
+	operatorlog.ReportFields(ctx, operation, reason, "", cause, fields...)
 	if cause != nil && d.observeOperationalReport != nil {
 		d.observeOperationalReport(snapshotOperationalReport(operation, reason, cause))
 	}

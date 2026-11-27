@@ -342,6 +342,9 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 	if !canonicalSNI {
 		return ErrServiceAdmission
 	}
+	if d := visitorDiagnosticFrom(ctx); d != nil {
+		d.hello = hello.ID
+	}
 	s.markVisitor(public)
 	return s.forwardService(ctx, &readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
 }
