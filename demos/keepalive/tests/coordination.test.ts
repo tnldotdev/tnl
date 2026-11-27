@@ -88,6 +88,9 @@ it("compares capacity recruitment using an explicit synthetic budget, not a prod
   expect(result.outcome).toBe("completed");
   expect(result.assumptions.policy).toBe("capacity");
   expect(result.samples.at(-1)?.hostTargets.p50).toBe(3);
+  expect(result.surplusRetirements).toBeGreaterThan(0);
+  expect(result.samples.at(-1)?.online).toBeLessThan(10);
+  expect(result.assumptions.replacementJitterMs).toEqual([0, 5_000]);
 });
 
 it("recruits for offered byte demand even when the reader population is small", async () => {

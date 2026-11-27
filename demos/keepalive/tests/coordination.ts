@@ -89,6 +89,8 @@ type Node = {
   leaving: boolean;
   readers: number;
   endsAt: number;
+  replacementStartsAt: number;
+  confirmingUntil: number;
   pendingReplacement: boolean;
   replacement?: Node;
 };
@@ -184,6 +186,8 @@ export async function simulateCoordination(
   let departures = 0;
   let invitations = 0;
   let earlyRetirements = 0;
+  let surplusRetirements = 0;
+  let failedStarts = 0;
   let introduced = 0;
   let discoveryRequests = 0;
   let failedDiscoveryRequests = 0;
@@ -302,6 +306,8 @@ export async function simulateCoordination(
       leaving: false,
       readers: 0,
       endsAt,
+      replacementStartsAt: endsAt - REPLACE_BEFORE_MS + Math.floor(random() * 5_000),
+      confirmingUntil: 0,
       pendingReplacement: false,
     };
     nodes.push(node);
@@ -316,7 +322,9 @@ export async function simulateCoordination(
     events.add(now + Math.floor(random() * PROBE_MS), () => tick(node));
     if (settings.discovery !== "none")
       events.add(now + 27_000 + Math.floor(random() * 6_000), () => discover(node));
-    events.add(endsAt, () => leave(node, false));
+    events.add(endsAt, () => {
+      if (now <= stopAt) leave(node, true);
+    });
     return node;
   }
 
@@ -377,7 +385,7 @@ export async function simulateCoordination(
   function tick(node: Node) {
     if (!node.online || node.leaving || now >= stopAt) return;
     const view = ownedView(node);
-    const departing = now >= node.endsAt - REPLACE_BEFORE_MS;
+    const departing = now >= node.replacementStartsAt;
     view.update({ departing });
     // a fixed reader population is redistributed on membership changes. real
     // leases, reader movement, and sampling have separate tests.
@@ -393,6 +401,19 @@ export async function simulateCoordination(
       });
     pending.add(task);
     void task.finally(() => pending.delete(task)).catch((error: unknown) => failures.push(error));
+    // mirror the worker's report callback, including surplus retirement without
+    // an invitation. a confirmed successor and any other confirmation receipt
+    // keep the donor available until the receipt expires.
+    if (
+      departing &&
+      now >= node.confirmingUntil &&
+      (node.replacement !== undefined || view.canRetire(now, target(node), view.hosts(now)))
+    ) {
+      earlyRetirements++;
+      if (node.replacement === undefined) surplusRetirements++;
+      leave(node, true);
+      return;
+    }
     if (settings.scenario === "turnover" && now >= startsAfter) {
       // model an available volunteer polling this donor. startup/confirmation is
       // an explicit 30 s fixture, not a measured browser or control operation.
@@ -403,19 +424,17 @@ export async function simulateCoordination(
         view.confirmStart(now + 180_000);
         events.add(now + 30_000, () => {
           node.pendingReplacement = false;
-          if (!node.online || now >= stopAt) return;
-          ownedView(node).finishStart();
-          node.replacement = start(nodes.length, node);
-          if (departing || now >= node.endsAt - REPLACE_BEFORE_MS) {
-            // peerServer retains its confirmation receipt for 12 s; the donor
-            // must stay available while the successor can replay confirmation.
-            events.add(now + 12_000, () => {
-              if (node.online && !node.leaving) {
-                earlyRetirements++;
-                leave(node, true);
-              }
-            });
+          if (now >= stopAt) return;
+          if (!node.online || node.leaving) {
+            failedStarts++;
+            return;
           }
+          ownedView(node).finishStart();
+          const successor = start(nodes.length, node);
+          // promotion.replacing is captured when the invitation is offered, not
+          // reconstructed from the donor's state when startup finishes.
+          if (departing) node.replacement = successor;
+          node.confirmingUntil = now + 12_000;
         });
       }
     }
@@ -535,6 +554,9 @@ export async function simulateCoordination(
       bootstrapSpreadMs: 60_000,
       replacementStartupMs: settings.scenario === "turnover" ? 30_000 : null,
       confirmationReceiptMs: 12_000,
+      replacementJitterMs: [0, 5_000],
+      retirement: "worker decision on each tick: confirmed successor or fresh surplus capacity",
+      naturalExpiry: "graceful final reports; abrupt loss remains unannounced",
       departurePeers: settings.departure ?? "current",
       policy: settings.policy ?? "visitors",
       readerDemand:
@@ -561,6 +583,8 @@ export async function simulateCoordination(
     departures,
     invitations,
     earlyRetirements,
+    surplusRetirements,
+    failedStarts,
     abruptlyLost: faulted.size,
     harness: {
       heapLimitBytes,

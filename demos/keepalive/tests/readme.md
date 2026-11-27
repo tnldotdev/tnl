@@ -132,7 +132,11 @@ redistributed as membership changes. It does not model lease expiration or
 audience sampling. The turnover fixture supplies a volunteer at each donor tick
 and a fixed 30-second startup, not a measured browser startup or a real HTTP
 invitation confirmation. It retains the production 12-second confirmation receipt
-before early donor departure. Test real admissions separately.
+before early donor departure, the worker's 0–5 second replacement jitter, and its
+fresh-surplus retirement check without requiring a replacement. Natural turn
+expiry sends final reports; the loss scenario does not. Test real admissions
+separately. Earlier reports without these lifecycle paths are superseded fixture
+results, not evidence that the real worker cannot reduce surplus capacity.
 
 ### reader and connection load
 

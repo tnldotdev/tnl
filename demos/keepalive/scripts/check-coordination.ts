@@ -59,6 +59,8 @@ try {
     "../src/peers/host.ts",
     "../src/peers/presence.ts",
     "../src/peers/report.ts",
+    "../src/peers/http.ts",
+    "../src/hosting/worker.ts",
     "../src/policy.ts",
   ];
   const { createHash } = await import("node:crypto");
