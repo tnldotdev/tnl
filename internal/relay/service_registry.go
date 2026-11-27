@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -23,6 +24,15 @@ type serviceConnection struct {
 	lease   relayv1.RelayLease
 	paths   *streamLifetime
 	packets *connectorPacketSession
+}
+
+// PublisherConnectionLoss reports the streams still owned when a carrier
+// loss was observed, not a count of all streams that were affected.
+type PublisherConnectionLoss struct {
+	Connection                  tunnelv1.ServicePublisherConnectionRef
+	RelayRunID                  string
+	ActiveStreams, PendingOpens int
+	Err                         error
 }
 
 type RegistryObserver interface {
@@ -339,8 +349,17 @@ func (c *publisherClaim) serve(ctx context.Context, session *tunnel.Session, out
 	// cleanup must remain visible without turning a planned drain into recovery.
 	paths.mu.Lock()
 	draining := paths.draining
+	active, pending := len(paths.streams), paths.opening
 	paths.mu.Unlock()
 	unexpected = err != nil && ctx.Err() == nil && !draining
+	if unexpected && acceptor.connectionLost != nil {
+		carrierErr := session.Err()
+		if carrierErr == nil {
+			carrierErr = err
+		}
+		acceptor.connectionLost(PublisherConnectionLoss{Connection: c.ref, RelayRunID: c.lease.RelayRunId,
+			ActiveStreams: active, PendingOpens: pending, Err: carrierErr})
+	}
 	if err != nil {
 		if failure.Only(err, muxsession.ErrClosed) || failure.Only(err, net.ErrClosed) ||
 			ctx.Err() != nil && (failure.Only(err, context.Canceled) || failure.Only(err, context.DeadlineExceeded)) {
@@ -380,7 +399,17 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		diagnostic.ingressRun = incoming.Header.PublicService.IngressRunID
 	}
 	started := time.Now()
-	defer func() { diagnostic.elapsed = time.Since(started); retErr = diagnostic.finish(retErr) }()
+	defer func() {
+		diagnostic.elapsed = time.Since(started)
+		retErr = diagnostic.finish(retErr)
+		endedWithoutReply := diagnostic.phase == "copy" && (diagnostic.closeTrigger == "publisher_connection_lost" ||
+			incoming.Header.PublicService != nil && incoming.Header.PublicService.DestinationPort == 443 &&
+				diagnostic.sent > 0 && diagnostic.returned == 0)
+		if retErr == nil && ctx.Err() == nil && (rejected != nil || endedWithoutReply) && a.observeClose != nil {
+			diagnostic.operation = rejected
+			a.observeClose(&diagnostic)
+		}
+	}()
 	defer func() { diagnostic.cleanup = errors.Join(diagnostic.cleanup, incoming.Stream().Close()) }()
 	if !a.acquireStream() {
 		rejected = &tunnel.ProtocolError{Code: tunnelv1.CapacityExceeded}
@@ -442,10 +471,12 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	stop := context.AfterFunc(ctx, func() { _ = incoming.Stream().Close(); _ = publisher.Close() })
 	defer stop()
 	copyDone, watchDone := make(chan struct{}), make(chan struct{})
+	var carrierReset atomic.Bool
 	go func() {
 		defer close(watchDone)
 		select {
 		case <-connection.paths.session.Done():
+			carrierReset.Store(true)
 			// losing the carrier is not an application half-close. reset the
 			// ingress stream so an idle TLS visitor cannot wait for more bytes
 			// on a publisher path that no longer exists.
@@ -455,7 +486,13 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 		case <-ctx.Done():
 		}
 	}()
-	defer func() { close(copyDone); <-watchDone }()
+	defer func() {
+		close(copyDone)
+		<-watchDone
+		if carrierReset.Load() {
+			diagnostic.closeTrigger = "publisher_connection_lost"
+		}
+	}()
 	// ingress alone creates PROXY v2. relay copies it and every following
 	// visitor byte unchanged, once, through this exact publisher stream.
 	_, finishForward := observability.Start(ctx, "relay.forward_connector_visitor")
@@ -463,9 +500,18 @@ func (a *ForwardingAcceptor) forwardService(ctx context.Context, incoming *tunne
 	diagnostic.step = "copy"
 	copyIngress, copyPublisher, observed := copyDiagnosticArguments(incoming.Stream(), publisher)
 	diagnostic.copyMethodsObserved = observed
-	copied, err := streamcopy.Copy(copyIngress, copyPublisher)
+	var leftDoneFirst bool
+	copied, err := streamcopy.CopyWithProgress(copyIngress, copyPublisher, nil, nil, func(left bool) { leftDoneFirst = left })
 	diagnostic.copyResult = err
 	diagnostic.sent, diagnostic.returned = copied.LeftToRight, copied.RightToLeft
+	switch {
+	case ctx.Err() != nil:
+		diagnostic.closeTrigger = "ingress_session_stopped"
+	case leftDoneFirst:
+		diagnostic.closeTrigger = "ingress_to_publisher_copy_ended"
+	default:
+		diagnostic.closeTrigger = "publisher_to_ingress_copy_ended"
+	}
 	finishForward(err)
 	if a.observer != nil {
 		a.observer.ObserveRelayTransfer(copied.LeftToRight, copied.RightToLeft, err)

@@ -24,6 +24,7 @@ type ForwardingAcceptorConfig struct {
 	StreamRejected   func(string)
 	Now              func() time.Time
 	Report           func(error)
+	ObserveClose     func(*ForwardingError)
 	Observer         ForwardingObserver
 }
 
@@ -39,6 +40,7 @@ type ForwardingAcceptor struct {
 	streamRejected   func(string)
 	now              func() time.Time
 	report           func(error)
+	observeClose     func(*ForwardingError)
 	observer         ForwardingObserver
 }
 
@@ -64,7 +66,7 @@ func NewForwardingAcceptor(config ForwardingAcceptorConfig) (*ForwardingAcceptor
 	return &ForwardingAcceptor{
 		registry: config.ServiceRegistry, currentLease: config.CurrentLease, secrets: config.ClusterSecrets, streams: make(chan struct{}, config.StreamCapacity),
 		streamsDelta: config.StreamsDelta, capacityRejected: config.CapacityRejected, streamRejected: config.StreamRejected,
-		now: config.Now, report: config.Report, observer: config.Observer,
+		now: config.Now, report: config.Report, observeClose: config.ObserveClose, observer: config.Observer,
 	}, nil
 }
 

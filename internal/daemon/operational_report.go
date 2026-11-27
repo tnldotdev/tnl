@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -46,11 +47,11 @@ type causeNode struct {
 	copyOperation, copyEndpoint, copyDirection string
 }
 
-func (d *daemon) reportOperationalError(ctx context.Context, operation failure.Operation, reason failure.Reason, cause error) {
+func (d *daemon) reportOperationalError(ctx context.Context, operation failure.Operation, reason failure.Reason, cause error, extra ...slog.Attr) {
 	// the original report is unconditional and receives the original error.
 	// the observer runs afterward and receives only a detached safe projection.
 	ctx, fields := forwardingLogFields(ctx, cause)
-	operatorlog.ReportFields(ctx, operation, reason, "", cause, fields...)
+	operatorlog.ReportFields(ctx, operation, reason, "", cause, append(fields, extra...)...)
 	if cause != nil && d.observeOperationalReport != nil {
 		d.observeOperationalReport(snapshotOperationalReport(operation, reason, cause))
 	}

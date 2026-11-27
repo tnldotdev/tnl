@@ -28,6 +28,7 @@ type ForwardingError struct {
 	assignmentRevision         uint64
 	sent, returned             int64
 	acknowledged               time.Duration
+	closeTrigger               string
 }
 
 func (e *ForwardingError) SpanContext() trace.SpanContext { return e.span }
@@ -40,6 +41,21 @@ func (e *ForwardingError) IngressRunID() string                    { return e.in
 func (e *ForwardingError) Assignment() (uint8, uint64)             { return e.slot, e.assignmentRevision }
 func (e *ForwardingError) AcceptedAt() time.Duration               { return e.acknowledged }
 func (e *ForwardingError) Forwarded() (int64, int64)               { return e.sent, e.returned }
+
+func (e *ForwardingError) CloseProgress() (string, string) {
+	if e.acknowledged == 0 {
+		return "", ""
+	}
+	progress := "relay_ack"
+	if e.sent > 0 {
+		// ingress-to-publisher wire bytes on this hop include PROXY metadata.
+		progress = "ingress_bytes_forwarded"
+	}
+	if e.returned > 0 {
+		progress = "publisher_bytes_forwarded"
+	}
+	return progress, e.closeTrigger
+}
 
 func (*ForwardingError) Error() string      { return "relay: visitor forwarding failed" }
 func (e *ForwardingError) GoString() string { return e.Error() }

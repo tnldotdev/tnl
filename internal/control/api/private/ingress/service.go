@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -143,6 +144,11 @@ func (s *service) ObserveServiceRecovery(
 	)
 	if err != nil {
 		return ingressv1.ServiceRecoveryObservation{}, s.storeError(ctx, err)
+	}
+	if observation.NewlyObserved {
+		operatorlog.Line(ctx, "service recovery observed",
+			slog.String("service_run_id", observation.RunID), slog.String("visitor_connection_id", body.VisitorConnectionId),
+			slog.Uint64("recovery_episode_id", observation.RecoveryEpisodeID), slog.Float64("recovery_ms", observation.ObservedSeconds*1000))
 	}
 	return ingressv1.ServiceRecoveryObservation{
 		RecoveryEpisodeId: int64(observation.RecoveryEpisodeID), ServiceId: observation.ServiceID, ServiceRunId: observation.RunID,

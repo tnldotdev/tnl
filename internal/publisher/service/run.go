@@ -793,6 +793,9 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
 	}
+	if d, _ := ctx.Value(publicVisitorDiagnosticKey{}).(*publicVisitorDiagnostic); d != nil {
+		ctx = observability.WithPublisherHTTPCompletion(ctx, d.observeHTTP)
+	}
 	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, metadata.Source, reserveCapacity), authority, nil)
 }
 

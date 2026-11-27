@@ -15,6 +15,7 @@ type PublisherAcceptorConfig struct {
 	Select                func(string) (ServicePublisherTarget, bool)
 	ReadyConnectionsDelta func(int)
 	ConnectionExited      func(bool)
+	ObserveConnectionLoss func(PublisherConnectionLoss)
 	CapacityRejected      func()
 	Report                func(error)
 	Observer              OperationObserver
@@ -26,6 +27,7 @@ type PublisherAcceptor struct {
 	selectTarget     func(string) (ServicePublisherTarget, bool)
 	readyDelta       func(int)
 	connectionExited func(bool)
+	connectionLost   func(PublisherConnectionLoss)
 	capacity         func()
 	report           func(error)
 	observer         OperationObserver
@@ -52,7 +54,7 @@ func NewPublisherAcceptor(config PublisherAcceptorConfig) (*PublisherAcceptor, e
 		selectTarget: config.Select,
 		readyDelta:   config.ReadyConnectionsDelta, connectionExited: config.ConnectionExited,
 		capacity: config.CapacityRejected, report: config.Report,
-		observer:  config.Observer,
+		observer: config.Observer, connectionLost: config.ObserveConnectionLoss,
 		connector: config.Connector,
 	}, nil
 }

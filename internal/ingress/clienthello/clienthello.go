@@ -30,13 +30,14 @@ const (
 type ClientHelloErrorCode string
 
 const (
-	ErrorMalformedClientHello ClientHelloErrorCode = "malformed_client_hello"
-	ErrorClientHelloTooLarge  ClientHelloErrorCode = "client_hello_too_large"
-	ErrorTooManyTLSRecords    ClientHelloErrorCode = "too_many_tls_records"
-	ErrorMissingSNI           ClientHelloErrorCode = "missing_sni"
-	ErrorDuplicateSNI         ClientHelloErrorCode = "duplicate_sni"
-	ErrorUnexpectedTLSRecord  ClientHelloErrorCode = "unexpected_tls_record"
-	ErrorClientHelloTimeout   ClientHelloErrorCode = "client_hello_timeout"
+	ErrorMalformedClientHello  ClientHelloErrorCode = "malformed_client_hello"
+	ErrorIncompleteClientHello ClientHelloErrorCode = "incomplete_client_hello"
+	ErrorClientHelloTooLarge   ClientHelloErrorCode = "client_hello_too_large"
+	ErrorTooManyTLSRecords     ClientHelloErrorCode = "too_many_tls_records"
+	ErrorMissingSNI            ClientHelloErrorCode = "missing_sni"
+	ErrorDuplicateSNI          ClientHelloErrorCode = "duplicate_sni"
+	ErrorUnexpectedTLSRecord   ClientHelloErrorCode = "unexpected_tls_record"
+	ErrorClientHelloTimeout    ClientHelloErrorCode = "client_hello_timeout"
 )
 
 type ClientHelloError struct {
@@ -243,6 +244,9 @@ func clientHelloReadError(err error) error {
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
 		return clientHelloError(ErrorClientHelloTimeout)
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return clientHelloError(ErrorIncompleteClientHello)
 	}
 	return clientHelloError(ErrorMalformedClientHello)
 }

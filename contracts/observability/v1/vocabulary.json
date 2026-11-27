@@ -633,7 +633,23 @@
         "unexpected",
         "stale_assignment",
         "publisher_unavailable",
-        "failed_ready"
+        "failed_ready",
+        "process_connection_rate",
+        "client_hello_connections",
+        "source_connection_rate",
+        "source_connections",
+        "inspection_deadline",
+        "invalid_forwarding_metadata",
+        "unallocated_port",
+        "invalid_hostname",
+        "client_hello_timeout",
+        "malformed_client_hello",
+        "incomplete_client_hello",
+        "client_hello_too_large",
+        "too_many_tls_records",
+        "missing_sni",
+        "duplicate_sni",
+        "unexpected_tls_record"
       ],
       "semantics": "closed domain reason from semantic result classification or lifecycle observer; never error text",
       "dimension_policy": "bounded"
@@ -1600,6 +1616,16 @@
       ]
     },
     {
+      "name": "tnl_diagnostic_samples_total",
+      "semantics": "Diagnostic samples delivered to logs or dropped by the sampling budget, by fixed kind.",
+      "kind": "counter",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.event",
+        "tnl.operation"
+      ]
+    },
+    {
       "name": "tnl_ingress_backend_streams",
       "semantics": "Tracked backend streams including streams being opened, challenges, and denied connections.",
       "kind": "gauge",
@@ -1622,6 +1648,15 @@
       "kind": "counter",
       "dimensions": [
         "otel.metric.overflow"
+      ]
+    },
+    {
+      "name": "tnl_ingress_early_closes_total",
+      "semantics": "Connections closed before service selection, by fixed reason.",
+      "kind": "counter",
+      "dimensions": [
+        "otel.metric.overflow",
+        "tnl.reason"
       ]
     },
     {

@@ -10,6 +10,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	"github.com/tnldotdev/tnl/internal/ingress"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
@@ -46,12 +47,14 @@ func forwardingLogFields(ctx context.Context, cause error) (context.Context, []s
 	var number uint64
 	var span trace.SpanContext
 	var operation, cleanup error
+	var lastProgress, trigger string
 	var v *ingress.VisitorError
 	var r *relay.ForwardingError
 	switch {
 	case errors.As(cause, &v):
 		service, run, visitor, number = v.ForwardingScope()
 		phase, operation, cleanup, span = v.ForwardingPhase(), v.ForwardingOperation(), v.ForwardingCleanup(), v.SpanContext()
+		lastProgress, trigger = v.CloseProgress()
 		addID("ingress_run_id", v.IngressRunID(), opaqueid.IngressRunPrefix)
 		sent, returned := v.Forwarded()
 		fields = append(fields, slog.Int64("visitor_bytes_to_relay", sent), slog.Int64("bytes_to_visitor", returned))
@@ -76,6 +79,7 @@ func forwardingLogFields(ctx context.Context, cause error) (context.Context, []s
 	case errors.As(cause, &r):
 		service, run, visitor, number = r.ForwardingScope()
 		phase, operation, cleanup, span = r.ForwardingPhase(), r.ForwardingOperation(), r.ForwardingCleanup(), r.SpanContext()
+		lastProgress, trigger = r.CloseProgress()
 		name, relayRun, publisher := r.RelayScope()
 		addRelay("", name, relayRun, publisher)
 		addID("ingress_run_id", r.IngressRunID(), opaqueid.IngressRunPrefix)
@@ -115,7 +119,19 @@ func forwardingLogFields(ctx context.Context, cause error) (context.Context, []s
 		fields = append(fields, slog.Uint64("service_run_number", number))
 	}
 	fields = append(fields, slog.String("phase", phase), slog.String("operation_result", operatorlog.CauseClass(operation)), slog.String("cleanup_result", operatorlog.CauseClass(cleanup)))
+	if lastProgress != "" {
+		fields = append(fields, slog.String("last_progress", lastProgress), slog.String("close_trigger", trigger))
+	}
 	return ctx, fields
+}
+
+func logForwardingClose(ctx context.Context, kind observability.DiagnosticKind, budget *operatorlog.Budget, diagnostic error) {
+	suppressed, allowed := budget.Take(ctx, kind)
+	if !allowed {
+		return
+	}
+	ctx, fields := forwardingLogFields(ctx, diagnostic)
+	operatorlog.Line(ctx, string(kind), append(fields, slog.Int64("suppressed", suppressed))...)
 }
 
 func safeRelayName(s string) bool {

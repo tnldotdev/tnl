@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -61,6 +62,9 @@ func Line(ctx context.Context, event string, fields ...slog.Attr) {
 	var line strings.Builder
 	line.WriteString(safeLine(event))
 	line.WriteString(observability.Correlation(ctx))
+	if len(fields) > 0 {
+		fmt.Fprintf(&line, " at_unix_ms=%d", time.Now().UnixMilli())
+	}
 	for _, f := range fields {
 		line.WriteByte(' ')
 		line.WriteString(safeLine(f.String()))

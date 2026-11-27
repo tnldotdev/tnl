@@ -289,12 +289,17 @@ it("switches away from a host silent before headers and lets the next body finis
             headerBudgetMs: 2_000,
             headersMs: null,
             outcome: "header_timeout",
+            phase: "headers",
+            bodyOrValidationMs: null,
           }),
           expect.objectContaining({
             kind: "asset",
             host: second?.hostname,
             status: 200,
             outcome: "ok",
+            phase: "complete",
+            bodyOrValidationMs: expect.any(Number),
+            searchBudgetLeftMs: expect.any(Number),
           }),
         ],
       }),
@@ -320,6 +325,9 @@ it("records why a public 503 had no eligible host without copying request data",
     eligibleHosts: 0,
     elapsedMs: expect.any(Number),
     canceled: false,
+    result: "no_candidate",
+    discoveryMs: expect.any(Number),
+    suppressed: 0,
     attempts: [
       {
         kind: "discovery",
@@ -328,10 +336,64 @@ it("records why a public 503 had no eligible host without copying request data",
         outcome: "upstream_status",
         headerBudgetMs: null,
         headersMs: expect.any(Number),
+        phase: "body_or_validation",
+        bodyOrValidationMs: expect.any(Number),
+        searchBudgetLeftMs: expect.any(Number),
         elapsedMs: expect.any(Number),
       },
     ],
   });
+});
+
+it("distinguishes a body failure from a header timeout before a successful fallback", async () => {
+  const reportFile = vi.fn();
+  const { proxy, fetchHost, report } = await setup(reportFile);
+  fetchHost.mockResolvedValueOnce(report());
+  fetchHost.mockResolvedValueOnce(
+    new Response(
+      new ReadableStream({
+        pull(stream) {
+          stream.error(new TypeError("body transport closed"));
+        },
+      }),
+    ),
+  );
+  fetchHost.mockResolvedValueOnce(new Response(script));
+  expect(await (await proxy.file(request("/app.js"))).text()).toBe(script);
+  expect(reportFile).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      result: "served",
+      discoveryMs: expect.any(Number),
+      attempts: [
+        expect.objectContaining({ kind: "discovery" }),
+        expect.objectContaining({
+          phase: "body_or_validation",
+          outcome: "transport_error",
+          status: 200,
+          headersMs: expect.any(Number),
+          bodyOrValidationMs: expect.any(Number),
+        }),
+        expect.objectContaining({ phase: "complete", searchBudgetLeftMs: expect.any(Number) }),
+      ],
+    }),
+  );
+});
+
+it("bounds failed-request summaries and includes dropped samples on the next line", async () => {
+  vi.useFakeTimers({ toFake: ["performance"] });
+  try {
+    const reportFile = vi.fn();
+    const { proxy, fetchHost } = await setup(reportFile);
+    fetchHost.mockImplementation(async () => new Response(null, { status: 503 }));
+    for (let i = 0; i < 11; i++) expect((await proxy.file(request("/"))).status).toBe(503);
+    expect(reportFile).toHaveBeenCalledTimes(8);
+    vi.advanceTimersByTime(1_000);
+    expect((await proxy.file(request("/"))).status).toBe(503);
+    expect(reportFile).toHaveBeenCalledTimes(9);
+    expect(reportFile).toHaveBeenLastCalledWith(expect.objectContaining({ suppressed: 3 }));
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps the original header budget for a sole publisher", async () => {

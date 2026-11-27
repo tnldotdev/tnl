@@ -4,21 +4,61 @@ import (
 	"bytes"
 	"errors"
 	"log"
+	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
-	"golang.org/x/time/rate"
 )
+
+func TestPublicVisitorDiagnosticSeesRequestStallAfterTLS(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	previousBudget := publicHTTPLogBudget
+	log.SetOutput(&output)
+	publicHTTPLogBudget = operatorlog.NewBudget(0, 1)
+	t.Cleanup(func() {
+		log.SetOutput(previous)
+		publicHTTPLogBudget = previousBudget
+	})
+	entered := make(chan struct{})
+	f := newPendingHTTPFixture(t, 1, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+	}))
+	v := f.mustOpen(t, 0, netip.MustParseAddr("192.0.2.10"))
+	if err := v.handshake(t, false); err != nil {
+		t.Fatal("fixture must complete TLS before stalling HTTP", err)
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://"+f.source.prepared.managedHostname+"/private-path", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer unchanged-application")
+	if err := request.Write(v.secure); err != nil {
+		t.Fatal(err)
+	}
+	claimedAwait(t, entered)
+	v.close()
+	v.join(t)
+	text := output.String()
+	if !strings.Contains(text, "publisher http request") || !strings.Contains(text, "visitor_connection_id="+v.header.VisitorConnectionID) ||
+		!strings.Contains(text, "last_progress=application_entered close_trigger=request_context_ended") ||
+		strings.Contains(text, "headers_ms=") || strings.Contains(text, "/private-path") {
+		t.Fatalf("publisher did not distinguish an application stall from TLS failure: %q", text)
+	}
+}
 
 func TestPublicVisitorDiagnosticBoundsLogVolume(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()
 	previousBudget := publicVisitorLogBudget
 	log.SetOutput(&output)
-	publicVisitorLogBudget = rate.NewLimiter(0, 2)
+	publicVisitorLogBudget = operatorlog.NewBudget(0, 2)
 	t.Cleanup(func() {
 		log.SetOutput(previous)
 		publicVisitorLogBudget = previousBudget

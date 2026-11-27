@@ -86,6 +86,8 @@ func TestReadinessAndRelayMetricsKeepFixedLabels(t *testing.T) {
 	ingress := New("ingress")
 	ingress.ObserveRelayAttempt("relay_address_secret", "error_secret")
 	ingress.IncInspectionFailure("challenge_token_secret")
+	ingress.ObserveIngressEarlyClose("challenge_token_secret")
+	ingress.ObserveDiagnostic("challenge_token_secret", true)
 	for _, metrics := range []*Metrics{control, ingress} {
 		response := httptest.NewRecorder()
 		metrics.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -116,6 +118,8 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 	metrics.AddRelayStreams(2)
 	metrics.IncCapacityRejection("public_connections")
 	metrics.IncInspectionFailure("client_hello")
+	metrics.ObserveIngressEarlyClose("incomplete_client_hello")
+	metrics.ObserveDiagnostic(IngressEarlyClose, false)
 	metrics.ObserveVisitor("policy_denied")
 	metrics.AddForwardedBytes("visitor_to_publisher", 1024)
 	metrics.observeAPIRequest("control", http.MethodPost, "/v1/services", APIRequestSuccess, 10*time.Millisecond)
@@ -146,6 +150,8 @@ func TestMetricsExposeFinalRuntimeVocabulary(t *testing.T) {
 		"tnl_relay_visitor_stream_slots_occupied": {kind: "GAUGE", value: 2},
 		"tnl_admission_rejections_total":          {"COUNTER", map[string]string{"tnl_capacity_resource": "public_connections"}, 1},
 		"tnl_ingress_inspection_failures_total":   {"COUNTER", map[string]string{"tnl_operation": "client_hello"}, 1},
+		"tnl_ingress_early_closes_total":          {"COUNTER", map[string]string{"tnl_reason": "incomplete_client_hello"}, 1},
+		"tnl_diagnostic_samples_total":            {"COUNTER", map[string]string{"tnl_operation": "ingress_early_close", "tnl_event": "dropped"}, 1},
 		"tnl_ingress_visitor_connections_total":   {"COUNTER", map[string]string{"tnl_outcome": "denied", "tnl_reason": "policy_denied"}, 1},
 		"tnl_ingress_forwarded_bytes_total":       {"COUNTER", map[string]string{"tnl_direction": "visitor_to_publisher"}, 1024},
 		"tnl_api_request_duration_seconds":        {"HISTOGRAM", map[string]string{"tnl_component": "control", "http_request_method": "POST", "http_route": "/v1/services", "tnl_outcome": "success"}, 0.01},

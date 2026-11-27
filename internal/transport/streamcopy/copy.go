@@ -34,6 +34,16 @@ func CopyObserved(
 	left, right net.Conn,
 	onLeftToRight, onRightToLeft func(int64),
 ) (Result, error) {
+	return CopyWithProgress(left, right, onLeftToRight, onRightToLeft, nil)
+}
+
+// CopyWithProgress can also report which direction returned first, before
+// failure cleanup. That order does not identify who initiated a close.
+func CopyWithProgress(
+	left, right net.Conn,
+	onLeftToRight, onRightToLeft func(int64),
+	firstDone func(leftToRight bool),
+) (Result, error) {
 	type copyResult struct {
 		leftToRight bool
 		bytes       int64
@@ -63,6 +73,9 @@ func CopyObserved(
 	go copyDirection(left, right, false, onRightToLeft)
 
 	first := <-results
+	if firstDone != nil {
+		firstDone(first.leftToRight)
+	}
 	var cleanupErr error
 	if first.err != nil {
 		cleanupErr = errors.Join(left.Close(), right.Close())

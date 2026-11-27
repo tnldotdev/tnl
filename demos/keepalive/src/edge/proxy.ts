@@ -40,6 +40,9 @@ const REFRESH_MS = 10_000;
 const STALE_MS = 60_000;
 const COOLDOWN_MS = 5_000;
 const MAX_KNOWN_HOSTS = 5_000;
+const ASSET_SEARCH_MS = 20_000;
+const ASSET_READ_MS = 6_000;
+const TRACE_BURST = 8;
 
 type Retain = (work: Promise<void>) => void;
 type Candidate = {
@@ -64,6 +67,9 @@ type ProxyAttempt = {
     | "invalid_response";
   headerBudgetMs: number | null;
   headersMs: number | null;
+  phase: "headers" | "body_or_validation" | "complete";
+  bodyOrValidationMs: number | null;
+  searchBudgetLeftMs: number;
   elapsedMs: number;
 };
 
@@ -71,14 +77,18 @@ type FileSelection = {
   knownHosts: number;
   eligibleHosts: number;
   attempts: ProxyAttempt[];
+  searchEndsAt: number;
+  result: "served" | "visitor_canceled" | "search_deadline" | "no_candidate" | "attempts_exhausted";
 };
 
-type FileTrace = FileSelection & {
+type FileTrace = Omit<FileSelection, "searchEndsAt"> & {
   ray: string | null;
   asset: string;
   status: number;
   elapsedMs: number;
   canceled: boolean;
+  discoveryMs: number;
+  suppressed: number;
 };
 
 export function createProxy(
@@ -95,6 +105,23 @@ export function createProxy(
   let audience: { until: number; message: GossipMessage } | undefined;
   let liveRevision = 0;
   let outageRevision = 0;
+  let traceTokens = TRACE_BURST;
+  let traceUpdated = performance.now();
+  let traceSuppressed = 0;
+
+  function takeFileTrace() {
+    const now = performance.now();
+    traceTokens = Math.min(TRACE_BURST, traceTokens + (now - traceUpdated) / 1000);
+    traceUpdated = now;
+    if (traceTokens < 1) {
+      traceSuppressed++;
+      return undefined;
+    }
+    traceTokens--;
+    const count = traceSuppressed;
+    traceSuppressed = 0;
+    return count;
+  }
 
   function remember(message: GossipMessage, now: number) {
     for (const host of [message.from, ...message.changes]) {
@@ -137,11 +164,11 @@ export function createProxy(
     signal: AbortSignal,
     check: (response: Response) => Promise<T>,
     headerBudget?: number,
-    attempts?: ProxyAttempt[],
+    selection?: FileSelection,
   ) {
     let response: Response | undefined;
     let target: URL | undefined;
-    const started = attempts === undefined ? undefined : performance.now();
+    const started = selection === undefined ? undefined : performance.now();
     let headersMs: number | null = null;
     let outcome: ProxyAttempt["outcome"] = "invalid_response";
     const headers = new AbortController();
@@ -165,7 +192,7 @@ export function createProxy(
       if (value !== undefined) outcome = "ok";
       return value;
     } catch (error) {
-      if (attempts) {
+      if (selection) {
         if (signal.aborted) outcome = "deadline_or_canceled";
         else if (headers.signal.aborted) outcome = "header_timeout";
         else if (response === undefined || error instanceof TransportFailure)
@@ -174,15 +201,20 @@ export function createProxy(
       }
       return undefined;
     } finally {
-      if (started !== undefined) {
-        attempts?.push({
+      if (started !== undefined && selection) {
+        const elapsedMs = Math.round(performance.now() - started);
+        selection.attempts.push({
           kind: path === PEERS_PATH ? "discovery" : "asset",
           host: target?.hostname ?? null,
           status: response?.status ?? null,
           outcome,
           headerBudgetMs: headerBudget ?? null,
           headersMs,
-          elapsedMs: Math.round(performance.now() - started),
+          phase:
+            outcome === "ok" ? "complete" : headersMs === null ? "headers" : "body_or_validation",
+          bodyOrValidationMs: headersMs === null ? null : Math.max(0, elapsedMs - headersMs),
+          searchBudgetLeftMs: Math.max(0, Math.round(selection.searchEndsAt - started)),
+          elapsedMs,
         });
       }
       if (response?.bodyUsed === false) await response.body?.cancel().catch(() => {});
@@ -193,7 +225,7 @@ export function createProxy(
     origin: string,
     shared: boolean,
     parent?: AbortSignal,
-    attempts?: ProxyAttempt[],
+    selection?: FileSelection,
   ) {
     const revision = outageRevision;
     const timeout = AbortSignal.timeout(3_000);
@@ -223,7 +255,7 @@ export function createProxy(
         return message;
       },
       undefined,
-      attempts,
+      selection,
     );
   }
 
@@ -264,10 +296,9 @@ export function createProxy(
     discover?: (message: GossipMessage) => Response,
     selection?: FileSelection,
   ): Promise<Response> {
-    const deadline = AbortSignal.any([
-      request.signal,
-      AbortSignal.timeout(discover === undefined ? 20_000 : PEER_DISCOVERY_MS),
-    ]);
+    const searchMs = discover === undefined ? ASSET_SEARCH_MS : PEER_DISCOVERY_MS;
+    if (selection) selection.searchEndsAt = performance.now() + searchMs;
+    const deadline = AbortSignal.any([request.signal, AbortSignal.timeout(searchMs)]);
     const revision = liveRevision;
     let discovered = false;
     const attempted = new Set<string>();
@@ -284,7 +315,7 @@ export function createProxy(
       // answering the shared address. the roster may lag behind a turnover.
       if (!discovered && (origin === undefined || attempted.size === ATTEMPTS - 1)) {
         discovered = true;
-        const message = await probe(sharedHost, true, deadline, selection?.attempts);
+        const message = await probe(sharedHost, true, deadline, selection);
         if (message !== undefined && discover !== undefined) return discover(message);
         origins = candidates(Date.now()).filter((value) => !attempted.has(value));
         origin =
@@ -301,7 +332,10 @@ export function createProxy(
         deadline,
         attempted.size < ATTEMPTS && origins.length > 1,
       );
-      if (response !== undefined) return response;
+      if (response !== undefined) {
+        if (selection) selection.result = "served";
+        return response;
+      }
       if (!deadline.aborted) coolDown(origin);
     }
     // a newer successful probe wins over an overlapping failed search.
@@ -310,6 +344,15 @@ export function createProxy(
     if (noHost) {
       audience = undefined;
       outageRevision++;
+    }
+    if (selection) {
+      selection.result = request.signal.aborted
+        ? "visitor_canceled"
+        : deadline.aborted
+          ? "search_deadline"
+          : attempted.size >= ATTEMPTS
+            ? "attempts_exhausted"
+            : "no_candidate";
     }
     return unavailable(noHost);
   }
@@ -358,9 +401,17 @@ export function createProxy(
       }
       const started = reportFile === undefined ? undefined : performance.now();
       const selection: FileSelection | undefined =
-        started === undefined ? undefined : { knownHosts: 0, eligibleHosts: 0, attempts: [] };
+        started === undefined
+          ? undefined
+          : {
+              knownHosts: 0,
+              eligibleHosts: 0,
+              attempts: [],
+              searchEndsAt: 0,
+              result: "no_candidate",
+            };
       const read = (origin: string, deadline: AbortSignal, alternate: boolean) => {
-        const signal = AbortSignal.any([deadline, AbortSignal.timeout(6_000)]);
+        const signal = AbortSignal.any([deadline, AbortSignal.timeout(ASSET_READ_MS)]);
         const selected = known.get(origin);
         return get(
           origin,
@@ -374,7 +425,7 @@ export function createProxy(
             return new Response(bytes, { headers: siteHeaders(contentType(asset.path)) });
           },
           alternate ? ALTERNATE_HEADERS_MS : undefined,
-          selection?.attempts,
+          selection,
         );
       };
       const response = await fromHost(request, sharedHost, retain, read, undefined, selection);
@@ -383,9 +434,17 @@ export function createProxy(
         selection &&
         (response.status !== 200 || selection.attempts.some((attempt) => attempt.outcome !== "ok"))
       ) {
+        const suppressed = takeFileTrace();
+        if (suppressed === undefined) return response;
         const ray = request.headers.get("CF-Ray");
         reportFile?.({
-          ...selection,
+          knownHosts: selection.knownHosts,
+          eligibleHosts: selection.eligibleHosts,
+          attempts: selection.attempts,
+          result: selection.result,
+          discoveryMs:
+            selection.attempts.find((attempt) => attempt.kind === "discovery")?.elapsedMs ?? 0,
+          suppressed,
           ray: ray !== null && /^[a-f0-9]{16}(?:-[a-z]{3})?$/i.test(ray) ? ray : null,
           asset: asset.path,
           status: response.status,

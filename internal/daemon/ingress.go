@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -19,6 +20,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/naming/tcpport"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
 	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
@@ -210,9 +212,14 @@ func (d *daemon) startIngressRuntime(
 			logOperationalError(ctx, "renew ingress lease", failure.ServerControlConnectionFailed, err)
 		},
 		LeaseEstablished: runtime.audit.bind,
-		Client:           runtimeConfig.client,
-		Registration:     registration,
-		RenewalInterval:  settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
+		LeaseExpired: func(lease ingressv1.IngressLease, visitors int64) {
+			operatorlog.Line(ctx, "ingress lease expired",
+				slog.String("ingress_run_id", runID), slog.Int64("ingress_lease_revision", lease.IngressLeaseRevision),
+				slog.Int64("serving_until_ms", lease.ServingUntil.UnixMilli()), slog.Int64("active_visitors", visitors))
+		},
+		Client:          runtimeConfig.client,
+		Registration:    registration,
+		RenewalInterval: settings.leaseRenewalInterval, RetryInterval: settings.controlRetryInterval,
 		Observer: metrics,
 		Load:     runtime.load,
 	})
@@ -260,6 +267,9 @@ func (d *daemon) startIngressRuntime(
 	if err != nil {
 		return err
 	}
+	earlyBudget := operatorlog.NewBudget(1, 8)
+	closeBudget := operatorlog.NewBudget(4, 24)
+	logCtx := observability.WithMetrics(ctx, metrics)
 	ingressConfig := ingress.Config{
 		AuditSink: runtime.audit,
 		Control:   runtimeConfig.client, Forwarder: forwarder, CurrentLease: controller.Lease,
@@ -271,7 +281,33 @@ func (d *daemon) startIngressRuntime(
 		MaxRelayConnections:       settings.standaloneRelayConnectionLimit,
 		Metrics:                   metrics, Observer: metrics,
 		OnError: func(err error) {
+			var visitor *ingress.VisitorError
+			if errors.As(err, &visitor) {
+				if suppressed, allowed := closeBudget.Take(logCtx, observability.IngressVisitorClose); allowed {
+					d.reportOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err, slog.Int64("suppressed", suppressed))
+				}
+				return
+			}
 			d.reportOperationalError(ctx, "serve ingress connection", failure.ServerIngressFailed, err)
+		},
+		ObserveEarlyClose: func(reason string) {
+			metrics.ObserveIngressEarlyClose(reason)
+			if suppressed, allowed := earlyBudget.Take(logCtx, observability.IngressEarlyClose); allowed {
+				operatorlog.Line(ctx, "ingress early close", slog.String("ingress_run_id", runID),
+					slog.String("close_trigger", reason), slog.Int64("suppressed", suppressed))
+			}
+		},
+		ObserveVisitorClose: func(diagnostic *ingress.VisitorError) {
+			logForwardingClose(logCtx, observability.IngressVisitorClose, closeBudget, diagnostic)
+		},
+		ObserveRoutingState: func(state ingress.RoutingState) {
+			fields := []slog.Attr{slog.String("state", state.State), slog.String("ingress_run_id", runID),
+				slog.Int64("ingress_lease_revision", state.LeaseRevision), slog.Int64("snapshot_observed_at_ms", state.ObservedAt.UnixMilli()),
+				slog.Int64("snapshot_valid_until_ms", state.ValidUntil.UnixMilli()), slog.Int("active_streams", state.ActiveStreams)}
+			if opaqueid.Valid(state.ControlRequestID, opaqueid.RequestPrefix) {
+				fields = append(fields, slog.String("control_request_id", state.ControlRequestID))
+			}
+			operatorlog.Line(ctx, "ingress routing", fields...)
 		},
 	}
 	if recovery != nil {

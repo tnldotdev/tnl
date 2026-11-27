@@ -67,8 +67,18 @@ func (c admissionRelayControl) DisconnectServicePublisherConnection(context.Cont
 
 // both hops use the real service-only relay acceptors and verified WSS/yamux.
 // control supplies one exact claim; no legacy publisher or forwarding adapter runs.
-func newAdmissionTransportFixture(t *testing.T, report ...func(error)) *admissionTransportFixture {
+type admissionTransportObservers struct {
+	report         func(error)
+	close          func(*relay.ForwardingError)
+	connectionLoss func(relay.PublisherConnectionLoss)
+}
+
+func newAdmissionTransportFixture(t *testing.T, observers ...admissionTransportObservers) *admissionTransportFixture {
 	t.Helper()
+	var observe admissionTransportObservers
+	if len(observers) != 0 {
+		observe = observers[0]
+	}
 	material := newForwardingTestMaterial(t)
 	now := time.Now().UTC()
 	id := func(prefix string) string { return prefix + strings.Repeat("a", 22) }
@@ -95,7 +105,16 @@ func newAdmissionTransportFixture(t *testing.T, report ...func(error)) *admissio
 	registry := relay.NewServiceRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
 	ready := make(chan struct{}, 1)
+	var faultObserved atomic.Bool
+	var recordLoss func(relay.PublisherConnectionLoss)
+	if observe.connectionLoss != nil {
+		recordLoss = func(loss relay.PublisherConnectionLoss) {
+			faultObserved.Store(true)
+			observe.connectionLoss(loss)
+		}
+	}
 	acceptor, err := relay.NewPublisherAcceptor(relay.PublisherAcceptorConfig{
+		ObserveConnectionLoss: recordLoss,
 		Select: func(service string) (relay.ServicePublisherTarget, bool) {
 			return relay.ServicePublisherTarget{Control: controller, Registry: registry}, service == ref.RelayServiceID
 		},
@@ -108,7 +127,15 @@ func newAdmissionTransportFixture(t *testing.T, report ...func(error)) *admissio
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisherServer := startForwardingTestServer(t, material, acceptor.Accept)
+	publisherServer := startForwardingTestServer(t, material, func(ctx context.Context, session muxsession.Session) error {
+		err := acceptor.Accept(ctx, session)
+		if faultObserved.Swap(false) {
+			// this fixture explicitly drops a ready carrier and asserts the
+			// observed error at that boundary. setup failures still fail here.
+			return nil
+		}
+		return err
+	})
 	transport, err := (muxsession.WebSocketConnector{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: material.roots}}).Connect(
 		ingressContext(t), muxsession.Endpoint{Address: publisherServer.address(), ServerName: material.serverName})
 	if err != nil {
@@ -130,9 +157,7 @@ func newAdmissionTransportFixture(t *testing.T, report ...func(error)) *admissio
 				f.released <- struct{}{}
 			}
 		}}
-	if len(report) > 0 {
-		forwardingConfig.Report = report[0]
-	}
+	forwardingConfig.Report, forwardingConfig.ObserveClose = observe.report, observe.close
 	forwarding, err := relay.NewForwardingAcceptor(forwardingConfig)
 	if err != nil {
 		t.Fatal(err)

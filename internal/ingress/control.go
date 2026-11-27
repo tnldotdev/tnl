@@ -40,6 +40,7 @@ type ControllerConfig struct {
 	// lease established runs before the first lease becomes visible to visitors.
 	// renewal never replaces a process run's lease or audit identity.
 	LeaseEstablished func(ingressv1.IngressLease) error
+	LeaseExpired     func(ingressv1.IngressLease, int64)
 	Client           ControlClient
 	Registration     ingressv1.IngressRegistration
 	RenewalInterval  time.Duration
@@ -63,6 +64,7 @@ type Controller struct {
 	report           func(error)
 	observer         OperationObserver
 	leaseEstablished func(ingressv1.IngressLease) error
+	leaseExpired     func(ingressv1.IngressLease, int64)
 	mu               sync.RWMutex
 	lease            ingressv1.IngressLease
 	leaseLost        bool
@@ -95,7 +97,7 @@ func NewController(config ControllerConfig) (*Controller, error) {
 		client: config.Client, registration: config.Registration,
 		renewalInterval: config.RenewalInterval, retryInterval: config.RetryInterval,
 		load: config.Load, now: config.Now, report: config.Report,
-		observer: config.Observer, leaseEstablished: config.LeaseEstablished,
+		observer: config.Observer, leaseEstablished: config.LeaseEstablished, leaseExpired: config.LeaseExpired,
 		leaseRequest: make(chan struct{}, 1), leaseUpdated: make(chan struct{}),
 	}
 	return c, nil
@@ -128,9 +130,11 @@ func (c *Controller) watchLease(ctx context.Context) error {
 	for {
 		c.mu.Lock()
 		delay := c.retryInterval
+		var expired ingressv1.IngressLease
 		if c.lease.IngressLeaseRevision != 0 {
 			delay = c.lease.ServingUntil.Sub(c.now())
 			if delay <= 0 {
+				expired = c.lease
 				c.leaseLost = true
 			}
 		}
@@ -138,6 +142,9 @@ func (c *Controller) watchLease(ctx context.Context) error {
 		updated := c.leaseUpdated
 		c.mu.Unlock()
 		if lost {
+			if expired.IngressLeaseRevision != 0 && ctx.Err() == nil && c.leaseExpired != nil {
+				c.leaseExpired(expired, c.load())
+			}
 			return ErrIngressLeaseLost
 		}
 		timer := time.NewTimer(delay)

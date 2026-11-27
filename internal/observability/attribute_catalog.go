@@ -56,7 +56,13 @@ func VocabularyAttributes() []AttributeDefinition {
 	add(Operation, PolicyBounded, "compiled operation name; never supplied input, SQL, or a path")
 	out = append(out, AttributeDefinition{Key: MetricOverflow.key(), DimensionPolicy: PolicySDK, ValueType: "bool", Semantics: "SDK cardinality overflow point; only boolean true is valid; replaces all application dimensions and must survive collector filtering"})
 	add(OutcomeKey, PolicyBounded, "operation result; domain detail belongs in reason, state, or event", Success.String(), Denied.String(), Rejected.String(), Timeout.String(), Canceled.String(), Error.String())
-	add(Reason, PolicyBounded, "closed domain reason from semantic result classification or lifecycle observer; never error text", append(domainReasons(), "expected", "unexpected", "stale_assignment", "publisher_unavailable", "failed_ready")...)
+	reasons := append(domainReasons(), "expected", "unexpected", "stale_assignment", "publisher_unavailable", "failed_ready")
+	for _, reason := range ingressEarlyCloseReasons {
+		if !slices.Contains(reasons, reason) {
+			reasons = append(reasons, reason)
+		}
+	}
+	add(Reason, PolicyBounded, "closed domain reason from semantic result classification or lifecycle observer; never error text", reasons...)
 	add(ErrorType, PolicyTraceLog, "exact owned failure.Reason, diagnostic code, or closed tunnel.<code>; unknown errors use "+string(failure.Unexpected), errorTypeValues()...)
 	add(State, PolicyBounded, "closed per-instrument readiness or state-machine value")
 	add(Event, PolicyBounded, "closed lifecycle event; bound is an SDK listener, registered is a native registration transition, and publication_ready is native routability; company reconciliation uses busy, completed, and partial_failed; status/watch readers do not emit transitions", events[1:]...)

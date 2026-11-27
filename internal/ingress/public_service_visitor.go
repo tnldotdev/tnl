@@ -366,7 +366,12 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		live, cancel := context.WithCancel(ctx)
 		defer cancel()
 		if selected.access == httpRequestAccess {
-			release, err := p.services.bind(selected.http, source.Addr().Unmap(), cancel)
+			release, err := p.services.bind(selected.http, source.Addr().Unmap(), func() {
+				if diagnostic != nil {
+					diagnostic.routingStopped.Store(true)
+				}
+				cancel()
+			})
 			if err != nil {
 				return errors.Join(err, backend.Close())
 			}
@@ -429,7 +434,8 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 		if diagnostic != nil {
 			diagnostic.phase = "copy"
 		}
-		copied, err := streamcopy.CopyObserved(public, upstream, nil, observePublisherWrite)
+		var leftDoneFirst bool
+		copied, err := streamcopy.CopyWithProgress(public, upstream, nil, observePublisherWrite, func(left bool) { leftDoneFirst = left })
 		finishForward(err)
 		cancel()
 		<-done
@@ -445,6 +451,34 @@ func (p *Server) acceptPublic(ctx context.Context, connection net.Conn, source, 
 			guardErr = nil
 		}
 		result := errors.Join(err, guardErr)
+		if diagnostic != nil {
+			diagnostic.lastProgress = "relay_ack"
+			if diagnostic.sent > 0 {
+				diagnostic.lastProgress = "visitor_bytes_forwarded"
+			}
+			if diagnostic.returned > 0 {
+				diagnostic.lastProgress = "publisher_bytes_forwarded"
+			}
+			switch {
+			case ctx.Err() != nil:
+				diagnostic.closeTrigger = "ingress_stopped"
+			case diagnostic.routingStopped.Load():
+				diagnostic.closeTrigger = "routing_stopped"
+			case !diagnostic.admitted.Load() && guardErr != nil:
+				diagnostic.closeTrigger = "capacity_guard"
+			case guardErr != nil && err == nil:
+				diagnostic.closeTrigger = "authorization_guard"
+			case leftDoneFirst:
+				diagnostic.closeTrigger = "visitor_to_relay_copy_ended"
+			default:
+				diagnostic.closeTrigger = "relay_to_visitor_copy_ended"
+			}
+			// A clean transport close may still leave a visitor with no TLS
+			// response. observe it without changing forwarding or its result.
+			if result == nil && ctx.Err() == nil && selected.access == httpRequestAccess && diagnostic.sent > 0 && diagnostic.returned == 0 && p.config.ObserveVisitorClose != nil {
+				p.config.ObserveVisitorClose(&diagnostic.VisitorError)
+			}
+		}
 		outcome = observability.VisitorForwarded
 		if result != nil {
 			outcome = observability.VisitorCommittedFailed

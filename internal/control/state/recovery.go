@@ -24,6 +24,7 @@ type ServiceRecoveryObservation struct {
 	OpenedAt          time.Time
 	ObservedAt        time.Time
 	ObservedSeconds   float64
+	NewlyObserved     bool
 }
 
 // callers hold the service and run locks. repeated losses share the first open
@@ -115,6 +116,7 @@ func (d *Database) ObserveServiceRecovery(ctx context.Context, lease IngressLeas
 	if err = tx.Commit(ctx); err != nil {
 		return ServiceRecoveryObservation{}, err
 	}
+	result.NewlyObserved = committed
 	if committed && d.activity != nil {
 		d.activity.metrics.Load().ObserveRecoveryDuration(time.Duration(result.ObservedSeconds * float64(time.Second)))
 	}

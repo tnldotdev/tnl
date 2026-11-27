@@ -413,6 +413,44 @@ func TestServiceRefreshRestorationTransientErrorsCannotExtendInstalledDeadline(t
 	})
 }
 
+func TestServiceRefreshReportsStaleAndRecoveredOnce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := restorationService(t)
+		defer f.server.Close()
+		states := make(chan RoutingState, 8)
+		f.server.config.ObserveRoutingState = func(state RoutingState) { states <- state }
+		var outage atomic.Bool
+		worker := restorationStartRefresh(t, f, func(context.Context, string, ingressv1.IngressLeaseIdentity) (ingressv1.IngressServices, error) {
+			if outage.Load() {
+				return ingressv1.IngressServices{}, errors.New("temporary snapshot outage")
+			}
+			return restorationFreshSnapshot(t, f), nil
+		})
+		defer worker.stop(t)
+		synctest.Wait()
+		outage.Store(true)
+		f.server.services.mu.Lock()
+		until := f.server.services.validUntil
+		f.server.services.mu.Unlock()
+		restorationAdvance(time.Until(until) + 2*time.Second)
+		if len(states) != 1 {
+			t.Fatal("wanted one stale transition", len(states))
+		}
+		down := <-states
+		restorationAdvance(2 * time.Second)
+		outage.Store(false)
+		restorationAdvance(2 * time.Second)
+		if len(states) != 1 {
+			t.Fatal("wanted one recovery transition", len(states))
+		}
+		up := <-states
+		if down.State != "stale" || !down.ValidUntil.Equal(until) || up.State != "recovered" ||
+			down.IngressRunID != up.IngressRunID || !up.ValidUntil.After(until) {
+			t.Fatal("transition evidence did not follow the installed snapshots", down, up)
+		}
+	})
+}
+
 func TestServiceRefreshRestorationClockTranslationSpendsRequestDelay(t *testing.T) {
 	for _, offset := range []time.Duration{0, -3 * time.Hour, 3 * time.Hour} {
 		t.Run(offset.String(), func(t *testing.T) {

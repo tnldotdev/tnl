@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -19,9 +20,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	"github.com/tnldotdev/tnl/internal/observability"
+	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/relay"
 	serverhttp "github.com/tnldotdev/tnl/internal/serverhttp"
 	"github.com/tnldotdev/tnl/internal/transport/muxsession"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
 	relayv1 "github.com/tnldotdev/tnl/pkg/api/control/private/relay/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
@@ -317,6 +320,15 @@ func (d *daemon) startRelayRuntime(
 				runtimeConfig.metrics.ObservePublisherExit(unexpected)
 			}
 		},
+		ObserveConnectionLoss: func(loss relay.PublisherConnectionLoss) {
+			operatorlog.Line(ctx, "relay publisher connection lost",
+				slog.String("relay_run_id", loss.RelayRunID), slog.String("service_run_id", loss.Connection.ServiceRunID),
+				slog.String("publisher_connection_id", loss.Connection.PublisherConnectionID),
+				slog.Int("connection_slot", int(loss.Connection.ConnectionSlot)),
+				slog.Uint64("connection_assignment_revision", loss.Connection.ConnectionAssignmentRevision),
+				slog.Int("active_streams", loss.ActiveStreams), slog.Int("pending_opens", loss.PendingOpens),
+				slog.String("cause", operatorlog.CauseClass(loss.Err)))
+		},
 		CapacityRejected: func() {
 			if runtimeConfig.metrics != nil {
 				runtimeConfig.metrics.IncCapacityRejection("publisher_connections")
@@ -334,6 +346,8 @@ func (d *daemon) startRelayRuntime(
 	if err != nil {
 		return nil, err
 	}
+	closeBudget := operatorlog.NewBudget(4, 24)
+	logCtx := observability.WithMetrics(ctx, runtimeConfig.metrics)
 	forwardingAcceptor, err := relay.NewForwardingAcceptor(relay.ForwardingAcceptorConfig{
 		Observer:        runtimeConfig.metrics,
 		CurrentLease:    controller.Lease,
@@ -355,7 +369,18 @@ func (d *daemon) startRelayRuntime(
 			}
 		},
 		Report: func(err error) {
+			var forwarded *relay.ForwardingError
+			var invalid *tunnel.StreamHeaderError
+			if errors.As(err, &forwarded) || errors.As(err, &invalid) {
+				if suppressed, allowed := closeBudget.Take(logCtx, observability.RelayVisitorClose); allowed {
+					d.reportOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err, slog.Int64("suppressed", suppressed))
+				}
+				return
+			}
 			d.reportOperationalError(ctx, "forward through relay", failure.ServerRelayFailed, err)
+		},
+		ObserveClose: func(diagnostic *relay.ForwardingError) {
+			logForwardingClose(logCtx, observability.RelayVisitorClose, closeBudget, diagnostic)
 		},
 	})
 	if err != nil {

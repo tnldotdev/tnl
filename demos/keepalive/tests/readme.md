@@ -125,8 +125,19 @@ publisher still negotiates HTTP/1.1. Do not reuse the tag or save raw TLS data.
 
 Search ingress logs for `client_hello_id`. On a match, use
 `visitor_connection_id` and `publisher_connection_id` to find the relay
-attempt and the browser's `publisher visitor` console line. The publisher logs
-errors and slow setup only, with a rate limit; a missing line does not prove
-the publisher saw nothing. An ingress failure before it reads the ClientHello
-cannot be matched this way. For a control watch `503`, search separately for
-its response `request_id` in `request_ids`.
+attempt and the browser's `publisher visitor` or `publisher http request`
+console line. For example, `last_progress=application_entered` with no
+`headers_ms` means that the request reached the handler, but the publisher
+did not start response headers. An EOF in a later hop does not locate the
+failure on its own.
+
+An ingress failure before it reads the ClientHello cannot be matched this way.
+Check `tnl_ingress_early_closes_total` for the reason and
+`tnl_diagnostic_samples_total` for logs dropped by the sample budget. In the
+ramp Worker, search for `keepalive_proxy_file` and the `CF-Ray` value. The
+summary separates host discovery, time to headers, and body reading or
+validation. `searchBudgetLeftMs` is the Worker's budget at the start of that
+attempt, not the browser's deadline.
+
+For a control watch `503`, search separately for its response `request_id`
+in `request_ids`.

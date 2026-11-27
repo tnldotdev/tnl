@@ -14,11 +14,11 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure"
 	failureproblem "github.com/tnldotdev/tnl/internal/failure/problem"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/operatorlog"
 	"github.com/tnldotdev/tnl/internal/security/credentials"
 	"github.com/tnldotdev/tnl/internal/serverhttp"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
-	"golang.org/x/time/rate"
 )
 
 const (
@@ -32,11 +32,11 @@ const (
 )
 
 var errPublisherWatchStopped = errors.New("publisher watch stopped")
-var watchUnbatchedLogBudget = rate.NewLimiter(4, 16)
+var watchUnbatchedLogBudget = operatorlog.NewBudget(4, 16)
 
 func reportUnbatchedWatchFailure(ctx context.Context, operation failure.Operation, id string, err error) {
-	if watchUnbatchedLogBudget.Allow() {
-		operatorlog.ReportContext(ctx, operation, failure.ServerAPIInternal, id, err)
+	if suppressed, allowed := watchUnbatchedLogBudget.Take(ctx, observability.WatchUnavailable); allowed {
+		operatorlog.ReportFields(ctx, operation, failure.ServerAPIInternal, id, err, slog.Int64("suppressed", suppressed))
 	}
 }
 
