@@ -32,7 +32,7 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266
 ARG VERSION
 ARG COMMIT
 
-LABEL org.opencontainers.image.source="https://github.com/tnldotdev/tnl" \
+LABEL org.opencontainers.image.source="https://github.com/madebyentropy/tnl" \
       org.opencontainers.image.description="tnl client and self-hosted server daemon" \
       org.opencontainers.image.licenses="BSD-3-Clause" \
       org.opencontainers.image.version=$VERSION \

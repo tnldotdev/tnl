@@ -62,7 +62,7 @@ esac`,
   writeFileSync(binary, "old binary");
   const run = (
     override = "",
-    latest = `https://github.com/tnldotdev/tnl/releases/tag/v${version}`,
+    latest = `https://github.com/madebyentropy/tnl/releases/tag/v${version}`,
   ) =>
     spawnSync("sh", [], {
       input: script,
@@ -106,8 +106,8 @@ test("an explicit version skips latest release lookup", () => {
 });
 
 test.each([
-  "https://github.com/tnldotdev/tnl/releases",
-  "https://github.com/tnldotdev/tnl/releases/tag/v1.2.3-rc.1",
+  "https://github.com/madebyentropy/tnl/releases",
+  "https://github.com/madebyentropy/tnl/releases/tag/v1.2.3-rc.1",
 ])("does not fall back when latest stable resolves to %s", (latest) => {
   const f = fixture();
   const result = f.run("", latest);
@@ -115,7 +115,7 @@ test.each([
   expect(result.stderr).toContain("Could not find a stable tnl release");
   expect(result.stdout).toBe("");
   expect(readFileSync(join(f.root, "urls"), "utf8").trim()).toBe(
-    "https://github.com/tnldotdev/tnl/releases/latest",
+    "https://github.com/madebyentropy/tnl/releases/latest",
   );
   expect(readFileSync(f.binary, "utf8")).toBe("old binary");
   expect(readdirSync(f.scratch)).toEqual([]);

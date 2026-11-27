@@ -25,7 +25,7 @@ tnl_install() (
     arm64|aarch64) arch=arm64 ;;
     *) exit 1 ;;
   esac
-  repo=https://github.com/tnldotdev/tnl
+  repo=https://github.com/madebyentropy/tnl
   version=${TNL_VERSION:-}
   if [ -z "$version" ]; then
     failure=stable_failed
