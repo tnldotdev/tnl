@@ -181,6 +181,7 @@ export class Gossip {
   #nextPrune = Infinity;
   #saturatedUntil = 0;
   #probing = false;
+  #probeCount = 0;
   #presence:
     | {
         at: number;
@@ -471,6 +472,22 @@ export class Gossip {
     return this.#countedPeers(now).map(({ change }) => change);
   }
 
+  departurePeers(now: number, successor?: Host): readonly Change[] {
+    const hosts = this.hosts(now);
+    const selected: Change[] = [];
+    const include = (host: Change | undefined) => {
+      if (host && selected.length < 3 && !selected.some((peer) => sameRun(peer, host)))
+        selected.push(host);
+    };
+    // the confirmed successor must learn the donor stopped. the oldest peers
+    // can all be leaving in the same wave, taking the final report with them.
+    if (successor) include(hosts.find((host) => sameRun(host, successor)));
+    for (const host of hosts)
+      if (!host.departing && (host.endsAt ?? Infinity) > now + REPLACE_BEFORE_MS) include(host);
+    for (const host of hosts) include(host);
+    return selected;
+  }
+
   #forgetOldPeers(now: number) {
     if (now < this.#nextPrune) return;
     this.#nextPrune = Infinity;
@@ -513,19 +530,27 @@ export class Gossip {
   async probe(clock: () => number, random: () => number, send: PeerTransport): Promise<void> {
     if (this.#probing || this.#self.left) return;
     this.#forgetOldPeers(clock());
-    // try suspect and quiet hosts too: a suspended tab can return at the same URL.
     const now = clock();
     const eligible = ({ change }: Seen) => !change.left && (change.endsAt ?? Infinity) > now;
+    // keep membership moving through fresh peers instead of spending every
+    // exchange on a departed cohort. one in four slots still tries quiet or
+    // suspect peers, so a suspended tab can recover at the same URL.
+    const preferFresh = this.#probeCount++ % 4 !== 3;
+    const preferred = (peer: Seen) =>
+      eligible(peer) &&
+      (!preferFresh ||
+        (peer.suspectAt === undefined && now - peer.change.reportedAt < FRESH_REPORT_MS));
     let selected: Seen | undefined;
     for (let i = 0; i < 8; i++) {
       const candidate = this.#slots[Math.floor(random() * this.#slots.length)];
-      if (candidate !== undefined && eligible(candidate)) {
+      if (candidate !== undefined && preferred(candidate)) {
         selected = candidate;
         break;
       }
     }
     if (selected === undefined) {
-      const candidates = this.#slots.filter(eligible);
+      let candidates = this.#slots.filter(preferred);
+      if (candidates.length === 0 && preferFresh) candidates = this.#slots.filter(eligible);
       selected = candidates[Math.floor(random() * candidates.length)];
     }
     if (selected === undefined) return;

@@ -8,7 +8,7 @@ import {
 } from "../src/peers/http.ts";
 import { INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES } from "../src/policy.ts";
 import { INVITATION_PATH, READY_HEADER } from "../src/enrollment.ts";
-import { Gossip } from "../src/peers/gossip.ts";
+import { Gossip, parseMessage } from "../src/peers/gossip.ts";
 import { HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/host.ts";
 import { InvitationUnavailable } from "../src/peers/invitation.ts";
 
@@ -224,6 +224,29 @@ async function verifyReplacement(lost: boolean) {
       bundle,
       knownHosts: 1,
     });
+    // older peers occupy the insertion-order slots but are departing too.
+    for (const label of ["c", "d", "e"]) {
+      const old = {
+        ...a,
+        origin: `https://p-${label.repeat(26)}.${HOST_PARENT}`,
+        publisherID: `pub_${label.repeat(22)}`,
+        runID: `srun_${label.repeat(22)}`,
+      };
+      const report = new Gossip(release, old, Date.now(), {
+        departing: true,
+        endsAt: Date.now() + 60_000,
+      }).message(Date.now());
+      expect(
+        (
+          await first.fetch(
+            new Request(new URL(PEERS_PATH, a.origin), {
+              method: "POST",
+              body: JSON.stringify(report),
+            }),
+          )
+        ).status,
+      ).toBe(200);
+    }
     await second.start(
       b,
       Date.now(),
@@ -254,6 +277,16 @@ async function verifyReplacement(lost: boolean) {
     expect((await replay(b)).status).toBe(403);
     await expect(readInviterCertificate(a, invitation, lifetime.signal)).rejects.toThrow();
     expect((await first.fetch(new Request(a.origin))).ok).toBe(true);
+    await first.stop();
+    const afterStop = parseMessage(
+      await (await second.fetch(new Request(new URL(PEERS_PATH, b.origin)))).json(),
+      release,
+      Date.now(),
+    );
+    expect(
+      afterStop?.changes.find((change) => change.runID === a.runID)?.left,
+      "the confirmed successor must learn its donor stopped",
+    ).toBe(true);
   } finally {
     lifetime.abort();
     await Promise.all([first.stop(), second.stop()]);

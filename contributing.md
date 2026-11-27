@@ -54,6 +54,11 @@ Browser tests need Chrome. Hosted Worker tests also need a Wrangler login:
 `mise exec -- wrangler login --device --browser=false`.
 `task js:keepalive:test:browser` checks Keepalive's built page in Chrome with
 protocol fixtures; it does not need a deployed server.
+`task js:keepalive:coordination` runs an opt-in virtual-time gossip simulation;
+`task js:keepalive:coordination:check` checks its complete and memory-bounded reports.
+`task js:keepalive:load:check` checks the reader load generator on loopback.
+See [Keepalive checks](demos/keepalive/tests/readme.md) for workload settings and
+the separate live-ramp safety requirements.
 
 For example, to check PostgreSQL migrations:
 

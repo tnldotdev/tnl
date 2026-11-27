@@ -726,7 +726,7 @@ export function peerServer(
       probing.abort();
       await probe;
       if (gossip === undefined) return;
-      const peers = gossip.hosts(Date.now()).slice(0, 3);
+      const peers = gossip.departurePeers(Date.now(), replacement);
       const message = gossip.leave(Date.now());
       const deadline = AbortSignal.timeout(1_000);
       await Promise.allSettled(peers.map((peer) => send(peer, message, undefined, deadline)));

@@ -101,6 +101,44 @@ tasks:
     cmds:
       - node demos/keepalive/tests/measurement-browser.ts
 
+  keepalive:coordination:
+    desc: Simulate real gossip and invitation decisions without browsers or external services
+    vars:
+      HOSTS: '{{default "500" .HOSTS}}'
+      MINUTES: '{{default "10" .MINUTES}}'
+      SEED: '{{default "1" .SEED}}'
+      SCENARIO: '{{default "growth" .SCENARIO}}'
+      LATENCY_MS: '{{default "20" .LATENCY_MS}}'
+      LOSS: '{{default "0" .LOSS}}'
+      DISCOVERY: '{{default "shared" .DISCOVERY}}'
+      DEPARTURE: '{{default "current" .DEPARTURE}}'
+      POLICY: '{{default "visitors" .POLICY}}'
+    cmds:
+      - node demos/keepalive/scripts/check-coordination.ts --hosts "{{.HOSTS}}" --minutes "{{.MINUTES}}" --seed "{{.SEED}}" --scenario "{{.SCENARIO}}" --latency-ms "{{.LATENCY_MS}}" --loss "{{.LOSS}}" --discovery "{{.DISCOVERY}}" --departure "{{.DEPARTURE}}" --policy "{{.POLICY}}" {{if .SAFE_BYTES_PER_HOST}}--safe-bytes-per-host "{{.SAFE_BYTES_PER_HOST}}"{{end}} {{if .READER_BYTES_PER_SECOND}}--reader-bytes-per-second "{{.READER_BYTES_PER_SECOND}}"{{end}} {{if .REPORT}}--report "{{.REPORT}}"{{end}}
+
+  keepalive:coordination:check:
+    desc: Check complete and memory-bounded coordination reports without external services
+    cmds:
+      - node demos/keepalive/tests/coordination-check.ts
+
+  keepalive:load:readers:
+    desc: Opt-in bounded reader/connection load on an existing ramp fleet (no fleet ownership)
+    requires:
+      vars: [SITE, MANIFEST, RELEASE, REPORT]
+    vars:
+      RATES: '{{default "1,5,10" .RATES}}'
+      SECONDS: '{{default "60" .SECONDS}}'
+      CONCURRENCY: '{{default "128" .CONCURRENCY}}'
+      CONNECTIONS: '{{default "fresh" .CONNECTIONS}}'
+      WORKLOAD: '{{default "page" .WORKLOAD}}'
+    cmds:
+      - node demos/keepalive/scripts/check-reader-load.ts --site "{{.SITE}}" --manifest "{{.MANIFEST}}" --release "{{.RELEASE}}" --report "{{.REPORT}}" --rates "{{.RATES}}" --seconds "{{.SECONDS}}" --concurrency "{{.CONCURRENCY}}" --connections "{{.CONNECTIONS}}" --workload "{{.WORKLOAD}}" {{if .ALLOW_RAMP_LOAD}}--allow-ramp-load{{end}} {{if .TARGET}}--target "{{.TARGET}}" --run "{{.RUN}}"{{end}} {{if .METRICS}}--metrics "{{.METRICS}}"{{end}}
+
+  keepalive:load:check:
+    desc: Check the reader load task against a loopback compressed fixture
+    cmds:
+      - node demos/keepalive/tests/reader-load-check.ts
+
   wasm:build:
     desc: Build the SDK's Go/WASM module and matching Go runtime
     cmds:
