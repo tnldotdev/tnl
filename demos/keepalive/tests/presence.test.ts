@@ -58,6 +58,23 @@ it("refreshes a single tab lease, bounds memory and expires silent tabs", () => 
   expect(leases.count(now + TAB_LEASE_MS + 1000)).toBe(0);
 });
 
+it("counts a new tab immediately and drops it six minutes after its last check-in", () => {
+  const minute = 60_000;
+  const leases = new TabLeases();
+  expect(HEARTBEAT_MS).toBe(2 * minute);
+  expect(leases.touch(tab, now)).toBe(true);
+  expect(leases.count(now)).toBe(1);
+  expect(leases.count(now + 2 * minute)).toBe(1);
+  expect(leases.count(now + 4 * minute)).toBe(1);
+  expect(leases.count(now + 6 * minute - 1)).toBe(1);
+  expect(leases.count(now + 6 * minute)).toBe(0);
+
+  expect(leases.touch(tab, now + 7 * minute)).toBe(true);
+  expect(leases.touch(tab, now + 9 * minute)).toBe(true);
+  expect(leases.count(now + 15 * minute - 1)).toBe(1);
+  expect(leases.count(now + 15 * minute)).toBe(0);
+});
+
 it("recovers a lost presence reply without counting the tab twice", async () => {
   const h = host("a", 1);
   const leases = new TabLeases();
@@ -339,15 +356,16 @@ it("sums fresh reports once and does not replace a tally with an old service run
 it("does not retain a remote tally after its host stops or its turn ends", () => {
   const a = new Gossip(releaseID, host("a", 1), now);
   const b = new Gossip(releaseID, host("b", 2), now);
-  const c = new Gossip(releaseID, host("c", 3), now, { endsAt: now + TAB_LEASE_MS + 1_000 });
+  const endsAt = now + FRESH_REPORT_MS;
+  const c = new Gossip(releaseID, host("c", 3), now, { endsAt });
   b.observeTabs(13, now);
   c.observeTabs(27, now);
   a.receive(b.message(now), now);
   a.receive(c.message(now), now);
-  expect(a.tabs(now + TAB_LEASE_MS)).toBe(40);
-  a.receive(b.leave(now + TAB_LEASE_MS), now + TAB_LEASE_MS);
-  expect(a.tabs(now + TAB_LEASE_MS)).toBe(27);
-  expect(a.tabs(now + TAB_LEASE_MS + 1_000)).toBe(0);
+  expect(a.tabs(endsAt - 1)).toBe(40);
+  a.receive(b.leave(endsAt - 1), endsAt - 1);
+  expect(a.tabs(endsAt - 1)).toBe(27);
+  expect(a.tabs(endsAt)).toBe(0);
 });
 
 it("keeps capacity for expiring turns but does not replace surplus hosts", () => {
@@ -363,7 +381,7 @@ it("keeps capacity for expiring turns but does not replace surplus hosts", () =>
   a.receive(b.message(now), now);
   a.receive(c.message(now), now);
   expect(a.canRetire(now, 2, a.hosts(now))).toBe(true);
-  expect(a.tabs(now + TAB_LEASE_MS)).toBe(50);
+  expect(a.tabs(now + FRESH_REPORT_MS)).toBe(50);
   expect(a.canRetire(now + FRESH_REPORT_MS, 2, a.hosts(now + FRESH_REPORT_MS))).toBe(false);
   expect(a.canRetire(now, 3, a.hosts(now))).toBe(false);
   expect(a.maybeStart(now, 2, () => true)).toBe(false);
