@@ -70,7 +70,7 @@ Each line has a run-local ID, epoch milliseconds and a scenario phase:
       "capacity_rejections_per_s": "sum(rate(tnl_admission_rejections_total[2m]))",
       "forwarded_bytes_per_s": "sum(rate(tnl_ingress_forwarded_bytes_total[2m]))",
       "oldest_routing_snapshot_age_s": "time() - min(tnl_ingress_service_routing_observed_timestamp_seconds)",
-      "pool_wait_s_per_s": "sum(rate(tnl_database_pool_acquire_wait_seconds_total[2m]))"
+      "pool_acquire_s_per_s": "sum(rate(tnl_database_pool_acquire_duration_seconds_sum[2m]))"
     }
   }
   ```
@@ -83,6 +83,93 @@ Each line has a run-local ID, epoch milliseconds and a scenario phase:
   through `KEEPALIVE_METRICS_TOKEN`. Reports contain query names and numeric
   values, not upstream labels, URLs, tokens, IPs, invitations or raw errors.
 
+### coordination without external services
+
+```sh
+mise exec -- task js:keepalive:coordination \
+  HOSTS=500 MINUTES=10 SCENARIO=growth SEED=1 REPORT=/path/to/new-report.json
+```
+
+The simulation runs production `Gossip` and `maybeStart` decisions, with JSON
+serialization and validation on a virtual network. It does not start browsers,
+call control, use Docker, or load ingress and relays.
+
+- `SCENARIO`: `growth`, `loss` (25% abrupt loss), `partition` (two minutes), or
+  `turnover` (normal 15-minute turns). Use `MINUTES=30` for repeated turnover.
+- `HOSTS`: 3–1000 initial hosts, introduced over one minute.
+- `LATENCY_MS`: 1–1000, with deterministic jitter; `LOSS`: 0–0.5 per direction.
+- `SEED`: repeatable randomness.
+- `DISCOVERY`: `shared` supplies an optimistic fresh shared-address report every
+  27–33 seconds, matching the browser's periodic rediscovery cadence but not the
+  Worker's cache. `none` tests loss of this discovery path. Turnover results without
+  rediscovery must not be reported as the normal system's behavior.
+- `DEPARTURE`: `current` uses production departure selection. `insertion` replays
+  the earlier first-three-peers selection for a controlled comparison.
+
+Reports contain settings, source hashes, JSON bytes, exchange failures, joins,
+departures, and 15-second distributions of roster and audience views. A recruitment
+safety limit retains a partial report and exits unsuccessfully. Failure counts
+include dead-peer probes; they are not page-load failures.
+JSON totals count serialized attempts and replies, including requests that a
+virtual link cannot deliver. They are not measured wire bytes or provider egress.
+
+Reader placement is an explicit fixture: 50 readers per initial host, instantly
+redistributed as membership changes. It does not model lease expiration or
+audience sampling. The turnover fixture supplies a volunteer at each donor tick
+and a fixed 30-second startup, not a measured browser startup or a real HTTP
+invitation confirmation. It retains the production 12-second confirmation receipt
+before early donor departure. Test real admissions separately.
+
+### reader and connection load
+
+Check the generator before a live run:
+
+```sh
+mise exec -- task js:keepalive:load:check
+```
+
+This runs the public load task against compressed loopback assets, checks fresh
+and reused connections, and proves corrupt transfers remain failures.
+
+For an already-running, approved ramp fleet:
+
+```sh
+mise exec -- task js:keepalive:load:readers \
+  SITE=https://ramp.keepthisalive.com ALLOW_RAMP_LOAD=1 \
+  MANIFEST=/path/to/pinned-release.json RELEASE=EXPECTED_RELEASE_ID \
+  REPORT=/path/to/new-report.ndjson RATES=1,5,10 SECONDS=60
+```
+
+The task verifies the pinned HTML then JavaScript within one six-second budget
+per scheduled open. It uses HTTP/1.1, not Chrome rendering or HTTP/2. `WORKLOAD=connection`
+fetches only the small HTML asset; `CONNECTIONS=reuse` enables keep-alive instead
+of the default fresh connections. A direct `TARGET` must be an exact ramp
+publisher origin with its expected service `RUN`. `CONCURRENCY` bounds in-flight
+opens. `METRICS` enables the infrastructure observer described above.
+
+The schedule does not slow down when requests fail. Late, capacity-limited, and
+canceled slots remain in the denominator and are never replayed. Each stage
+reports attempted and scheduled work separately. All stages run through ordinary
+failures; the task exits unsuccessfully if any stage completes less than 99% of
+scheduled opens within the deadline. Interrupted runs are incomplete.
+
+The task records transfer status, TCP/TLS/header timing, encoded response-body
+bytes, decoded verified bytes, connection reuse, and generator CPU/memory/event-loop
+delay. Encoded body bytes exclude HTTP headers and TCP/TLS framing; they are not
+provider billing measurements.
+
+Ramp hostnames have separate application state but still share production tnl
+servers. This task caps shared-backend load at 10 arrivals/second and stops if the
+independent tunnel probe fails. It does not start or stop publishers: the fleet
+owner must block certificate issuance, collect server monitoring through the final
+load minute, and verify every endpoint offline at teardown. Deliberate saturation,
+higher-rate server capacity tests, and server fault injection require an isolated
+backend and its own resource limits.
+
+`recruitment.ts` contains an observation-only capacity rule for comparisons. Its
+tests use fixture budgets, not production capacity claims. No serving or
+recruitment behavior changes until calibration establishes a safe per-host budget.
+
 ## scale qualification
 
 Each host offers one invitation at a time. It aims for at least three hosts,
@@ -92,6 +179,10 @@ invitation expires. The donor checks the replacement at its exact publisher
 address before finishing a handoff. The Worker checks the donor's invitation
 before requesting a one-use enrollment key. Returning identities can reuse
 their existing grant.
+On departure, the donor sends its final report to the confirmed successor first,
+then peers expected to remain beyond the replacement window. This remains
+best-effort work with at most three recipients and a one-second deadline; older
+departing peers are only fallback recipients.
 
 For an existing coordinator-backed deployment, stop new turns on the old
 release and let active turns drain (including the one-hour first host) before

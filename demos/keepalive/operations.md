@@ -46,6 +46,9 @@ Once a new volunteer enrolls and serves, revoke the old Worker identity with
 Use the separate `ramp` deployment for load tests. It has its own Worker
 (`wrangler.ramp.jsonc`), credential, and certificate under
 `*.ramp.hosts.keepthisalive.com`. Production deploys do not use it.
+These application boundaries do not isolate server capacity: ramp still uses
+production control, ingress, and relays. Use a separate backend for saturation or
+server-process fault tests. See [load checks](tests/readme.md#reader-and-connection-load).
 
 For a failed asset fetch, look for `keepalive_proxy_file` in the ramp Worker's
 logs. Filter by the browser's `CF-Ray` value. The entry shows how many hosts the

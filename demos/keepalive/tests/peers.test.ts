@@ -167,3 +167,18 @@ it("advertises a newer certificate holder and switches donors when that host sto
   view.receive(message({ ...best, seq: 2, left: true }), now);
   expect(view.message(now).changes).toContainEqual(fallback);
 });
+
+it("sends departure to the exact successor and durable peers before older departing peers", () => {
+  const view = new Gossip(release, report(1), now);
+  for (let i = 2; i < 8; i++)
+    view.receive(message(report(i, { departing: true, endsAt: now + 60_000 })), now);
+  const successor = report(9, { endsAt: now + 900_000 });
+  const durable = report(10, { endsAt: now + 900_000 });
+  const another = report(11, { endsAt: now + 900_000 });
+  for (const peer of [successor, durable, another]) view.receive(message(peer), now);
+  expect(view.departurePeers(now, successor)).toEqual([successor, durable, another]);
+  const replaced = { ...successor, runID: report(12).runID, runNumber: "12" };
+  view.receive(message(replaced), now);
+  expect(view.departurePeers(now, successor)).not.toContainEqual(successor);
+  expect(new Set(view.departurePeers(now).map((peer) => peer.runID)).size).toBe(3);
+});

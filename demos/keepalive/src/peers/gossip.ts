@@ -471,6 +471,22 @@ export class Gossip {
     return this.#countedPeers(now).map(({ change }) => change);
   }
 
+  departurePeers(now: number, successor?: Host): readonly Change[] {
+    const hosts = this.hosts(now);
+    const selected: Change[] = [];
+    const include = (host: Change | undefined) => {
+      if (host && selected.length < 3 && !selected.some((peer) => sameRun(peer, host)))
+        selected.push(host);
+    };
+    // the confirmed successor must learn the donor stopped. the oldest peers
+    // can all be leaving in the same wave, taking the final report with them.
+    if (successor) include(hosts.find((host) => sameRun(host, successor)));
+    for (const host of hosts)
+      if (!host.departing && (host.endsAt ?? Infinity) > now + REPLACE_BEFORE_MS) include(host);
+    for (const host of hosts) include(host);
+    return selected;
+  }
+
   #forgetOldPeers(now: number) {
     if (now < this.#nextPrune) return;
     this.#nextPrune = Infinity;
