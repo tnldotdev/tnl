@@ -2,7 +2,9 @@ package clienthello
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -28,13 +30,14 @@ const (
 type ClientHelloErrorCode string
 
 const (
-	ErrorMalformedClientHello ClientHelloErrorCode = "malformed_client_hello"
-	ErrorClientHelloTooLarge  ClientHelloErrorCode = "client_hello_too_large"
-	ErrorTooManyTLSRecords    ClientHelloErrorCode = "too_many_tls_records"
-	ErrorMissingSNI           ClientHelloErrorCode = "missing_sni"
-	ErrorDuplicateSNI         ClientHelloErrorCode = "duplicate_sni"
-	ErrorUnexpectedTLSRecord  ClientHelloErrorCode = "unexpected_tls_record"
-	ErrorClientHelloTimeout   ClientHelloErrorCode = "client_hello_timeout"
+	ErrorMalformedClientHello  ClientHelloErrorCode = "malformed_client_hello"
+	ErrorIncompleteClientHello ClientHelloErrorCode = "incomplete_client_hello"
+	ErrorClientHelloTooLarge   ClientHelloErrorCode = "client_hello_too_large"
+	ErrorTooManyTLSRecords     ClientHelloErrorCode = "too_many_tls_records"
+	ErrorMissingSNI            ClientHelloErrorCode = "missing_sni"
+	ErrorDuplicateSNI          ClientHelloErrorCode = "duplicate_sni"
+	ErrorUnexpectedTLSRecord   ClientHelloErrorCode = "unexpected_tls_record"
+	ErrorClientHelloTimeout    ClientHelloErrorCode = "client_hello_timeout"
 )
 
 type ClientHelloError struct {
@@ -47,8 +50,10 @@ func (e *ClientHelloError) Error() string {
 
 type ClientHello struct {
 	ServerName string
-	Prefix     []byte
-	Remainder  io.Reader
+	// ID is a per-handshake correlation hint, never an identity or grant.
+	ID        [16]byte
+	Prefix    []byte
+	Remainder io.Reader
 }
 
 // Replay returns the inspected prefix followed by the unread connection. the
@@ -105,11 +110,20 @@ func inspectClientHello(reader io.Reader) (ClientHello, error) {
 			continue
 		}
 
-		serverName, err := parseClientHello(handshake[4:handshakeLength])
+		var probe []byte
+		serverName, err := parseClientHello(handshake[4:handshakeLength], &probe)
 		if err != nil {
 			return ClientHello{}, err
 		}
+		// normal clients use the random after legacy_version. a direct probe
+		// can offer a fresh nonce alongside its normal ALPN without packet capture.
+		seed := handshake[6:38]
+		if probe != nil {
+			seed = probe
+		}
+		digest := sha256.Sum256(seed)
 		return ClientHello{
+			ID:         [16]byte(digest[:16]),
 			ServerName: serverName,
 			Prefix:     bytes.Clone(buffered.Bytes()),
 			Remainder:  reader,
@@ -118,7 +132,7 @@ func inspectClientHello(reader io.Reader) (ClientHello, error) {
 	return ClientHello{}, clientHelloError(ErrorTooManyTLSRecords)
 }
 
-func parseClientHello(body []byte) (string, error) {
+func parseClientHello(body []byte, probe *[]byte) (string, error) {
 	cursor := cryptobyte.String(body)
 	var sessionID, cipherSuites, compressionMethods cryptobyte.String
 	if !cursor.Skip(2+32) ||
@@ -162,7 +176,7 @@ func parseClientHello(body []byte) (string, error) {
 				return "", clientHelloError(ErrorMalformedClientHello)
 			}
 			seenALPN = true
-			if err := parseALPN(extension); err != nil {
+			if err := parseALPN(extension, probe); err != nil {
 				return "", err
 			}
 		}
@@ -200,7 +214,7 @@ func parseServerName(data cryptobyte.String) (string, error) {
 	return serverName, nil
 }
 
-func parseALPN(data cryptobyte.String) error {
+func parseALPN(data cryptobyte.String, probe *[]byte) error {
 	var protocols cryptobyte.String
 	if !data.ReadUint16LengthPrefixed(&protocols) || !data.Empty() || protocols.Empty() {
 		return clientHelloError(ErrorMalformedClientHello)
@@ -210,6 +224,13 @@ func parseALPN(data cryptobyte.String) error {
 		var protocol cryptobyte.String
 		if !protocols.ReadUint8LengthPrefixed(&protocol) || protocol.Empty() {
 			return clientHelloError(ErrorMalformedClientHello)
+		}
+		const prefix = "tnl-probe-"
+		if len(protocol) == len(prefix)+32 && bytes.HasPrefix(protocol, []byte(prefix)) && *probe == nil {
+			var nonce [16]byte
+			if _, err := hex.Decode(nonce[:], protocol[len(prefix):]); err == nil {
+				*probe = nonce[:]
+			}
 		}
 	}
 	return nil
@@ -223,6 +244,9 @@ func clientHelloReadError(err error) error {
 	var networkError net.Error
 	if errors.As(err, &networkError) && networkError.Timeout() {
 		return clientHelloError(ErrorClientHelloTimeout)
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return clientHelloError(ErrorIncompleteClientHello)
 	}
 	return clientHelloError(ErrorMalformedClientHello)
 }

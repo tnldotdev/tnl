@@ -5,17 +5,56 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ForwardingError retains one validated forwarding header's scope and the
 // separate copy and final-close results. it grants no visitor permission.
 type ForwardingError struct {
-	service, run, visitor string
-	number                uint64
-	phase                 string
-	operation, copyResult error
-	cleanup, result       error
-	copyMethodsObserved   bool
+	service, run, visitor      string
+	number                     uint64
+	phase                      string
+	operation, copyResult      error
+	cleanup, result            error
+	copyMethodsObserved        bool
+	relay, relayRun, publisher string
+	step                       string
+	elapsed                    time.Duration
+	span                       trace.SpanContext
+	ingressRun                 string
+	slot                       uint8
+	assignmentRevision         uint64
+	sent, returned             int64
+	acknowledged               time.Duration
+	closeTrigger               string
+}
+
+func (e *ForwardingError) SpanContext() trace.SpanContext { return e.span }
+
+func (e *ForwardingError) RelayScope() (string, string, string) {
+	return e.relay, e.relayRun, e.publisher
+}
+func (e *ForwardingError) ForwardingStep() (string, time.Duration) { return e.step, e.elapsed }
+func (e *ForwardingError) IngressRunID() string                    { return e.ingressRun }
+func (e *ForwardingError) Assignment() (uint8, uint64)             { return e.slot, e.assignmentRevision }
+func (e *ForwardingError) AcceptedAt() time.Duration               { return e.acknowledged }
+func (e *ForwardingError) Forwarded() (int64, int64)               { return e.sent, e.returned }
+
+func (e *ForwardingError) CloseProgress() (string, string) {
+	if e.acknowledged == 0 {
+		return "", ""
+	}
+	progress := "relay_ack"
+	if e.sent > 0 {
+		// ingress-to-publisher wire bytes on this hop include PROXY metadata.
+		progress = "ingress_bytes_forwarded"
+	}
+	if e.returned > 0 {
+		progress = "publisher_bytes_forwarded"
+	}
+	return progress, e.closeTrigger
 }
 
 func (*ForwardingError) Error() string      { return "relay: visitor forwarding failed" }

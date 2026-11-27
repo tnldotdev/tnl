@@ -41,6 +41,8 @@ type Decision struct {
 // selected service owns its certificate name; SNI cannot select another target.
 // target trust is independent of the public WebPKI identity presented to clients.
 type Stream struct {
+	// ObserveHTTPSetup reports TLS (true), then completed HTTP setup (false).
+	ObserveHTTPSetup       func(tlsDone bool)
 	Protocol               config.ProtocolName
 	Public                 bool
 	Hostname               string
@@ -336,6 +338,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 		client = &connectorServiceConn{conn: secured, ctx: ctx, admission: connector}
 	}
 	if httpVisitor, ok := s.Visitor.(HTTPVisitor); ok {
+		if s.ObserveHTTPSetup != nil {
+			s.ObserveHTTPSetup(true)
+		}
 		if s.Protocol != config.ProtocolHTTP {
 			return ErrEndpoint
 		}
@@ -346,6 +351,9 @@ func (s Stream) Forward(ctx context.Context, visitor net.Conn) (result error) {
 			return err
 		}
 		admissionDone(nil)
+		if s.ObserveHTTPSetup != nil {
+			s.ObserveHTTPSetup(false)
+		}
 		// capture the input stop before owned cleanup cancels the lifetime.
 		return errors.Join(httpVisitor.Frontend.Forward(ctx, secured, HTTPTarget{Address: s.Target, Handler: s.Handler, Transport: transport, Drain: s.HTTPDrain,
 			RequestBodyIdleTimeout: s.RequestBodyIdleTimeout,

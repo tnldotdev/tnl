@@ -5,10 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tnldotdev/tnl/internal/failure"
@@ -38,12 +42,60 @@ func Report(operation failure.Operation, reason failure.Reason, requestID string
 // ReportContext preserves the one-line format and adds owned trace correlation
 // and optional safe OTLP log export through the process context.
 func ReportContext(ctx context.Context, operation failure.Operation, reason failure.Reason, requestID string, cause error) {
+	ReportFields(ctx, operation, reason, requestID, cause)
+}
+
+// ReportFields appends owner-validated identifiers, counts and fixed labels.
+func ReportFields(ctx context.Context, operation failure.Operation, reason failure.Reason, requestID string, cause error, fields ...slog.Attr) {
 	if cause != nil {
 		if specific, ok := failure.ReasonOf(cause); ok {
 			reason = specific
 		}
-		log.Print(Format(operation, reason, requestID) + safeCauseFields(cause) + observability.Correlation(ctx))
+		Line(ctx, Format(operation, reason, requestID)+safeCauseFields(cause), fields...)
 		observability.OperationalFailure(ctx, operation, reason, requestID, cause)
+	}
+}
+
+// Line prints an authored event and owner-validated fields without reporting
+// a second failure to telemetry.
+func Line(ctx context.Context, event string, fields ...slog.Attr) {
+	var line strings.Builder
+	line.WriteString(safeLine(event))
+	line.WriteString(observability.Correlation(ctx))
+	if len(fields) > 0 {
+		fmt.Fprintf(&line, " at_unix_ms=%d", time.Now().UnixMilli())
+	}
+	for _, f := range fields {
+		line.WriteByte(' ')
+		line.WriteString(safeLine(f.String()))
+	}
+	log.Print(line.String())
+}
+
+// CauseClass reports what the local operation observed, without inferring
+// which peer originated a reset or formatting an external error.
+func CauseClass(err error) string {
+	var network net.Error
+	var postgres *pgconn.PgError
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "reset"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.As(err, &network) && network.Timeout():
+		return "timeout"
+	case errors.Is(err, net.ErrClosed), errors.Is(err, io.ErrClosedPipe):
+		return "closed"
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "eof"
+	case errors.As(err, &postgres):
+		return "postgres"
+	default:
+		return "error"
 	}
 }
 

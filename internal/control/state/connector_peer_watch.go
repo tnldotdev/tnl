@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
@@ -16,6 +17,17 @@ import (
 )
 
 const MaxConnectorPeerWatchBatch = 512
+
+// WatchComparisonFailure separates pool acquisition from work performed with
+// a connection. it never formats database errors or includes watched scopes.
+type WatchComparisonFailure struct {
+	Phase         string
+	Acquire, Work time.Duration
+	cause         error
+}
+
+func (*WatchComparisonFailure) Error() string   { return "publisher watch comparison failed" }
+func (e *WatchComparisonFailure) Unwrap() error { return e.cause }
 
 var ErrPublisherWatchContended = errors.New("publisher watch authorization database contention")
 
@@ -126,26 +138,58 @@ func (d *Database) CompareConnectorPeerWatchVersions(ctx context.Context, watche
 		}
 		return
 	}
-	changed, dirty, _, err := compare(controlstatedb.New(d.pool))
+	started := time.Now()
+	var detail WatchComparisonFailure
+	acquire := func(phase string) (*pgxpool.Conn, error) {
+		detail.Phase = phase
+		begin := time.Now()
+		conn, err := d.pool.Acquire(ctx)
+		detail.Acquire += time.Since(begin)
+		return conn, err
+	}
+	defer func() {
+		if retErr != nil {
+			detail.Work = time.Since(started) - detail.Acquire
+			detail.cause, retErr = retErr, &detail
+		}
+	}()
+	changed, dirty, _, err := func() ([]ConnectorPeerWatchVersion, []string, [257]int64, error) {
+		conn, err := acquire("acquire_counters")
+		if err != nil {
+			return nil, nil, [257]int64{}, err
+		}
+		defer conn.Release()
+		detail.Phase = "read_counters"
+		return compare(controlstatedb.New(conn))
+	}()
 	if err != nil || len(dirty) == 0 {
 		return changed, err
 	}
 	// pair fresh bookmarks with their exact revisions, including concurrent
 	// commits from other controls. the idle path needs only the first read.
-	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	conn, err := acquire("acquire_snapshot")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+	detail.Phase = "begin_snapshot"
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(ctx, tx, "read publisher watch changes", &retErr)()
 	q := controlstatedb.New(tx)
+	detail.Phase = "snapshot_counters"
 	changed, dirty, versions, err := compare(q)
 	if err != nil {
 		return nil, err
 	}
+	detail.Phase = "read_versions"
 	rows, err := q.ReadConnectorPeerWatchVersions(ctx, dirty)
 	if err != nil {
 		return nil, err
 	}
+	detail.Phase = "commit"
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}

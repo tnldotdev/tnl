@@ -12,6 +12,7 @@ import (
 // OpeningError retains the exact retry boundary even when no stream is returned.
 // VisitorBytes excludes framing and, on ingress openings, PROXY metadata.
 type OpeningError struct {
+	Step         string
 	Committed    bool
 	VisitorBytes int64
 	Err          error
@@ -29,13 +30,14 @@ func (s *Session) OpenServiceForwardingStream(ctx context.Context, h tunnelv1.Se
 func (s *Session) openStream(ctx context.Context, write func(muxsession.Stream) (int, error)) (result muxsession.Stream, err error) {
 	stream, err := s.transport.OpenStream(ctx)
 	if err != nil {
-		return nil, &OpeningError{Err: err}
+		return nil, &OpeningError{Step: "open_stream", Err: err}
 	}
+	step := "set_deadline"
 	written := 0
 	defer func() {
 		if err != nil {
 			result = nil
-			err = &OpeningError{Committed: written > 0, VisitorBytes: int64(written), Err: errors.Join(controlContextError(ctx, err), stream.Close())}
+			err = &OpeningError{Step: step, Committed: written > 0, VisitorBytes: int64(written), Err: errors.Join(controlContextError(ctx, err), stream.Close())}
 		}
 	}()
 	finish, err := setupDeadline(ctx, stream)
@@ -43,13 +45,16 @@ func (s *Session) openStream(ctx context.Context, write func(muxsession.Stream) 
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, finish(err == nil)) }()
+	step = "write_opening"
 	written, err = write(stream)
 	if err != nil {
 		return nil, err
 	}
+	step = "wait_for_ack"
 	response := &returnStream{Stream: stream}
 	if err := response.accept(); err != nil {
 		return nil, err
 	}
+	step = "clear_deadline"
 	return response, nil
 }

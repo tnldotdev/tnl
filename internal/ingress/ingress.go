@@ -67,6 +67,9 @@ type Config struct {
 	Observer                  OperationObserver
 	ObserveRecovery           func(ingressv1.ServiceRunReference, string, uint64, time.Time, []byte)
 	OnError                   func(error)
+	ObserveEarlyClose         func(reason string)
+	ObserveVisitorClose       func(*VisitorError)
+	ObserveRoutingState       func(RoutingState)
 	Traffic                   TrafficConfig
 	Pending                   PendingConfig
 }
@@ -273,6 +276,7 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("deadline")
 		}
+		s.earlyClose("inspection_deadline")
 		return nil
 	}
 	source, destination, reader, err := s.connectionMetadata(public)
@@ -280,6 +284,7 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("metadata")
 		}
+		s.earlyClose("invalid_forwarding_metadata")
 		return nil
 	}
 	if s.traffic != nil {
@@ -287,6 +292,7 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		if reason != "" {
 			s.rejectCapacity(reason)
 			s.observeTraffic("source", "capacity")
+			s.earlyClose(reason)
 			return nil
 		}
 		s.observeTraffic("source", "accepted")
@@ -297,6 +303,7 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 	// service by its trusted destination before attempting HTTPS inspection.
 	if s.servicePorts.Contains(int(destination.Port())) || s.config.RequireProxyHeader && destination.Port() != 443 {
 		if !s.servicePorts.Contains(int(destination.Port())) {
+			s.earlyClose("unallocated_port")
 			return nil
 		}
 		finishInspection()
@@ -309,6 +316,10 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("client_hello")
 		}
+		var inspection *clienthello.ClientHelloError
+		if errors.As(err, &inspection) {
+			s.earlyClose(string(inspection.Code))
+		}
 		return nil
 	}
 	serverName, err := naming.CanonicalizeHostname(hello.ServerName)
@@ -316,6 +327,7 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		if s.config.Metrics != nil {
 			s.config.Metrics.IncInspectionFailure("hostname")
 		}
+		s.earlyClose("invalid_hostname")
 		return nil
 	}
 	// service SNI may differ by case, but a trailing dot is not accepted.
@@ -340,7 +352,11 @@ func (s *Server) handle(ctx context.Context, public net.Conn, finishInspection f
 		return nil
 	}
 	if !canonicalSNI {
+		s.earlyClose("invalid_hostname")
 		return ErrServiceAdmission
+	}
+	if d := visitorDiagnosticFrom(ctx); d != nil {
+		d.hello = hello.ID
 	}
 	s.markVisitor(public)
 	return s.forwardService(ctx, &readerConn{Conn: public, reader: hello.Remainder}, source, destination, hello.ServerName, hello.Prefix)
@@ -407,10 +423,24 @@ func (s *Server) connectionMetadata(public net.Conn) (netip.AddrPort, netip.Addr
 }
 
 func (s *Server) admit(connection net.Conn) bool {
+	reason := s.admitReason(connection)
+	if reason != "" {
+		s.earlyClose(reason)
+	}
+	return reason == ""
+}
+
+func (s *Server) earlyClose(reason string) {
+	if s.config.ObserveEarlyClose != nil {
+		s.config.ObserveEarlyClose(reason)
+	}
+}
+
+func (s *Server) admitReason(connection net.Conn) string {
 	if s.traffic != nil && !s.traffic.process() {
 		s.rejectCapacity("process_connection_rate")
 		s.observeTraffic("source", "capacity")
-		return false
+		return "process_connection_rate"
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -422,7 +452,10 @@ func (s *Server) admit(connection net.Conn) bool {
 				s.config.Metrics.IncCapacityRejection("client_hello_connections")
 			}
 		}
-		return false
+		if s.closing {
+			return "draining"
+		}
+		return "client_hello_connections"
 	}
 	s.pending++
 	if s.config.Metrics != nil {
@@ -431,7 +464,7 @@ func (s *Server) admit(connection net.Conn) bool {
 	s.connections[connection] = false
 	// register before launch so Drain cannot miss an accepted handler.
 	s.active.Add(1)
-	return true
+	return ""
 }
 
 func (s *Server) release(connection net.Conn) error {

@@ -48,6 +48,8 @@ type Metrics struct {
 	drainingRejections          *counter
 	capacityLimits              *gauge
 	inspectionFailures          *counter
+	diagnostics                 *counter
+	ingressEarlyCloses          *counter
 	forwardedBytes              *counter
 	trafficAdmissions           *counter
 	relayAttempts               *counter
@@ -124,6 +126,8 @@ func (metrics *Metrics) initInstruments(role Role) {
 	metrics.drainingRejections = newCounter(m, "tnl_ingress_draining_rejections_total", "Connections rejected because ingress was draining.")
 	metrics.capacityLimits = newGauge(m, "tnl_admission_limit", "Resolved admission limit by fixed resource; keyed source and hostname limits report their configured per-key value.", CapacityResource)
 	metrics.inspectionFailures = newCounter(m, "tnl_ingress_inspection_failures_total", "Ingress connections rejected before classification by fixed failure stage.", Operation)
+	metrics.diagnostics = newCounter(m, "tnl_diagnostic_samples_total", "Diagnostic samples delivered to logs or dropped by the sampling budget, by fixed kind.", Operation, Event)
+	metrics.ingressEarlyCloses = newCounter(m, "tnl_ingress_early_closes_total", "Connections closed before service selection, by fixed reason.", Reason)
 	metrics.forwardedBytes = newCounter(m, "tnl_ingress_forwarded_bytes_total", "Bytes forwarded through ingress, recorded after a copy finishes.", Direction)
 	metrics.trafficAdmissions = newCounter(m, "tnl_ingress_traffic_admissions_total", "Process-local traffic decisions by fixed stage and result; excludes identities and network addresses.", Operation, OutcomeKey)
 	metrics.relayAttempts = newCounter(m, "tnl_ingress_relay_attempts_total", "Ingress internal-forwarding attempts by connection slot and bounded outcome.", ConnectionSlot, OutcomeKey)

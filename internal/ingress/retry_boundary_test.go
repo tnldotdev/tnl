@@ -2,16 +2,163 @@ package ingress
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/relay"
 	"github.com/tnldotdev/tnl/internal/transport/proxyproto"
+	"github.com/tnldotdev/tnl/internal/transport/tunnel"
+	ingressv1 "github.com/tnldotdev/tnl/pkg/api/control/private/ingress/v1"
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
+
+func TestIngressCorrelatesPreHTTPRelayTimeout(t *testing.T) {
+	ingressReports, relayReports := make(chan error, 2), make(chan error, 2)
+	f := newAdmissionTransportFixture(t, admissionTransportObservers{report: func(err error) { relayReports <- err }})
+	config := serviceIngressConfig(t, nil)
+	control := config.Control.(*httpsServiceControl)
+	control.services["route.example"] = httpsService{service: f.header.ServiceID, run: f.header.ServiceRunID}
+	control.relays = []ingressv1.ServiceRelay{f.relay}
+	config.Forwarder = f.forwarder
+	config.OpenTimeout = 750 * time.Millisecond
+	config.OnError = func(err error) { ingressReports <- err }
+	_, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000", "http/1.1", "tnl-probe-"+strings.Repeat("00", 16))
+	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
+	incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer incoming.Stream().Close()
+	// the publisher saw the opening but sends no acknowledgment before the
+	// ingress deadline. do not send an HTTP request or fabricate a request id.
+	if err := ingressAwait(t, handshake); err == nil {
+		t.Fatal("withheld relay acknowledgment did not fail TLS")
+	}
+	header := incoming.Header
+	_ = incoming.Stream().Close()
+	err = ingressAwait(t, ingressReports)
+	var got *VisitorError
+	if !errors.As(err, &got) {
+		t.Fatal("missing visitor diagnostics", err)
+	}
+	wantHello := sha256.Sum256(make([]byte, 16))
+	service, run, visitor, _ := got.ForwardingScope()
+	attempts := got.RelayAttempts()
+	if got.ClientHelloID() != [16]byte(wantHello[:16]) || service != header.ServiceID || run != header.ServiceRunID || visitor != header.VisitorConnectionID ||
+		len(attempts) != 1 || attempts[0].RelayRunID != header.RelayRunID || attempts[0].PublisherConnectionID != header.PublisherConnectionID ||
+		attempts[0].Step != "wait_for_ack" || attempts[0].Committed || !errors.Is(attempts[0].Err, context.DeadlineExceeded) {
+		t.Fatal("report lost pre-HTTP correlation or opening attribution", got, attempts)
+	}
+	var relayed *relay.ForwardingError
+	var opening *tunnel.OpeningError
+	if err := ingressAwait(t, relayReports); !errors.As(err, &relayed) || !errors.As(relayed.ForwardingOperation(), &opening) || opening.Step != "wait_for_ack" {
+		t.Fatal("relay lost its publisher opening phase", err)
+	}
+	_, relayRun, publisher := relayed.RelayScope()
+	_, _, relayVisitor, _ := relayed.ForwardingScope()
+	if relayVisitor != visitor || relayRun != header.RelayRunID || publisher != header.PublisherConnectionID {
+		t.Fatal("publisher, relay and ingress reported different identities")
+	}
+}
+
+func TestIngressCorrelatesPublisherConnectionLossAfterAck(t *testing.T) {
+	losses := make(chan relay.PublisherConnectionLoss, 2)
+	relayCloses := make(chan error, 2)
+	f := newAdmissionTransportFixture(t, admissionTransportObservers{
+		connectionLoss: func(loss relay.PublisherConnectionLoss) { losses <- loss },
+		report:         func(err error) { relayCloses <- err },
+		close:          func(e *relay.ForwardingError) { relayCloses <- e },
+	})
+	config := serviceIngressConfig(t, nil)
+	control := config.Control.(*httpsServiceControl)
+	control.services["route.example"] = httpsService{service: f.header.ServiceID, run: f.header.ServiceRunID}
+	control.relays = []ingressv1.ServiceRelay{f.relay}
+	config.Forwarder = f.forwarder
+	ingressCloses := make(chan *VisitorError, 2)
+	config.ObserveVisitorClose = func(e *VisitorError) { ingressCloses <- e }
+	config.OnError = func(e error) {
+		var visitor *VisitorError
+		if errors.As(e, &visitor) {
+			ingressCloses <- visitor
+		}
+	}
+	_, address := startIngress(t, config)
+	client := ingressClient(t, address, "route.example", "192.0.2.4:42000")
+	handshake := ingressWorker(t, func() { _ = client.Close() }, client.Handshake)
+	incoming, err := f.publisher.AcceptServiceForwardingStream(ingressContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := incoming.Accept(); err != nil {
+		t.Fatal(err)
+	}
+	_, reader, err := proxyproto.Decode(incoming.Stream())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello [1]byte
+	if _, err := io.ReadFull(reader, hello[:]); err != nil || hello[0] != 22 {
+		t.Fatal("fixture did not reach visitor TLS through relay", err)
+	}
+	if err := f.wire.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ingressAwait(t, handshake); err == nil {
+		t.Fatal("dropped publisher connection completed TLS")
+	}
+	lost := ingressAwait(t, losses)
+	visitor := ingressAwait(t, ingressCloses)
+	_, _, id, _ := visitor.ForwardingScope()
+	if id != incoming.Header.VisitorConnectionID || lost.Connection.PublisherConnectionID != incoming.Header.PublisherConnectionID || lost.RelayRunID != incoming.Header.RelayRunID {
+		t.Fatal("shared connection loss did not match the affected visitor")
+	}
+	progress, _ := visitor.CloseProgress()
+	if progress != "visitor_bytes_forwarded" {
+		t.Fatal("ingress did not capture the last completed step", progress)
+	}
+	var relayed *relay.ForwardingError
+	if err := ingressAwait(t, relayCloses); !errors.As(err, &relayed) {
+		t.Fatal("missing relay close evidence", err)
+	}
+	_, _, id, _ = relayed.ForwardingScope()
+	_, returned := relayed.Forwarded()
+	if id != incoming.Header.VisitorConnectionID || relayed.AcceptedAt() <= 0 || returned != 0 {
+		t.Fatal("relay did not show an acknowledged stream with no publisher bytes")
+	}
+	select {
+	case <-losses:
+		t.Fatal("one lost publisher connection logged twice")
+	default:
+	}
+}
+
+func TestIngressCountsEarlyClosesWithoutAClientHelloID(t *testing.T) {
+	early := make(chan string, 2)
+	config := serviceIngressConfig(t, nil)
+	config.ObserveEarlyClose = func(reason string) { early <- reason }
+	_, address := startIngress(t, config)
+	bad, err := net.DialTimeout("tcp", address, fixtureTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = bad.Close()
+	if got := ingressAwait(t, early); got != "invalid_forwarding_metadata" {
+		t.Fatal(got)
+	}
+	noTLS := ingressClient(t, address, "route.example", "192.0.2.4:42000")
+	_ = noTLS.NetConn().Close()
+	if got := ingressAwait(t, early); got != "incomplete_client_hello" {
+		t.Fatal(got)
+	}
+}
 
 func TestIngressRetryBoundary(t *testing.T) {
 	for _, committed := range []int{0, 1} {

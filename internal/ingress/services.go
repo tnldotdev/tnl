@@ -101,6 +101,36 @@ func NewServiceRouting() *ServiceRouting {
 	return r
 }
 
+// RoutingState records only transitions of an installed routing table.
+type RoutingState struct {
+	State, IngressRunID, ControlRequestID string
+	LeaseRevision                         int64
+	ObservedAt, ValidUntil                time.Time
+	ActiveStreams                         int
+}
+
+func (r *ServiceRouting) sampleState(now time.Time, wasStale bool, cause error) (RoutingState, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.observedAt.IsZero() {
+		return RoutingState{}, false
+	}
+	stale := !r.validUntil.After(now)
+	if stale == wasStale {
+		return RoutingState{}, false
+	}
+	state := RoutingState{State: "recovered", IngressRunID: r.lease.IngressRunId, LeaseRevision: r.lease.IngressLeaseRevision,
+		ObservedAt: r.observedAt, ValidUntil: r.validUntil, ActiveStreams: len(r.visitors)}
+	if stale {
+		state.State = "stale"
+		var problem *ControlProblemError
+		if errors.As(cause, &problem) && problem.Problem != nil {
+			state.ControlRequestID = problem.Problem.RequestId
+		}
+	}
+	return state, true
+}
+
 // RefreshServices runs independently of arriving visitors. it also removes
 // finished traffic budgets without putting a control call on connection setup.
 func (s *Server) RefreshServices(ctx context.Context) error {
@@ -115,7 +145,19 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 		}
 	}()
 	defer r.Close()
+	var stale bool
+	var lastRefreshErr error
+	observe := func(cause error) {
+		if s.config.ObserveRoutingState == nil || ctx.Err() != nil {
+			return
+		}
+		if state, changed := r.sampleState(time.Now(), stale, cause); changed {
+			stale = state.State == "stale"
+			s.config.ObserveRoutingState(state)
+		}
+	}
 	for {
+		observe(lastRefreshErr)
 		delay := min(s.config.RecheckInterval, time.Second)
 		lease := s.config.CurrentLease()
 		if lease.IngressLeaseRevision > 0 && !lease.Draining && lease.ServingUntil.After(time.Now()) {
@@ -130,6 +172,7 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 			if deadline, ok := call.Deadline(); ok && !time.Now().Before(deadline) {
 				err = errors.Join(err, context.DeadlineExceeded)
 			}
+			observe(err)
 			if err == nil && samePrivateLease(lease, s.config.CurrentLease()) {
 				err = r.apply(started, lease, snapshot)
 				if err == nil {
@@ -137,6 +180,8 @@ func (s *Server) RefreshServices(ctx context.Context) error {
 				}
 			}
 			cancel()
+			lastRefreshErr = err
+			observe(err)
 			if err != nil && ctx.Err() == nil && s.config.OnError != nil {
 				s.config.OnError(err)
 			}

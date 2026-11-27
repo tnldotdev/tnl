@@ -561,18 +561,25 @@ func (c *Claimed) Serve(ctx context.Context) (result error) {
 			continue
 		}
 		if c.bound.prepared.managedProtocol == config.ProtocolHTTP && incoming.Header.PublicService != nil {
+			diagnostic := publicVisitorDiagnostic{started: time.Now(), step: "reserve", header: incoming.Header, transport: c.transport}
 			visitor, code := c.bound.reserveHTTP(incoming.Context(), c.ref, incoming.Stream(), incoming.Header)
 			if visitor == nil {
-				_ = incoming.Reject(code)
+				err := incoming.Reject(code)
+				diagnostic.finish(incoming.Context(), errors.Join(&tunnel.ProtocolError{Code: code}, err))
 				continue
 			}
+			diagnostic.step = "ack_relay"
 			if err := incoming.Accept(); err != nil {
+				diagnostic.finish(incoming.Context(), err)
 				recordHTTPCleanup(errors.Join(err, visitor.http.retire()))
 				continue
 			}
 			workers.Go(func() {
 				defer func() { recordHTTPCleanup(visitor.http.retire()) }()
-				_ = c.bound.serveBody(visitor.http.ctx, c.ref, visitor, incoming.Header, incoming.CloseWrite, incoming.RequestCapacity, visitor)
+				diagnostic.step = "serve"
+				ctx := context.WithValue(visitor.http.ctx, publicVisitorDiagnosticKey{}, &diagnostic)
+				err := c.bound.serveBody(ctx, c.ref, visitor, incoming.Header, incoming.CloseWrite, incoming.RequestCapacity, visitor)
+				diagnostic.finish(ctx, err)
 			})
 			continue
 		}
@@ -672,8 +679,15 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	if err := stream.SetDeadline(deadline); err != nil {
 		return err
 	}
+	markPublicVisitor(ctx, "read_metadata")
 	metadata, replay, err := proxyproto.Decode(stream)
-	if err != nil || metadata.Source.Addr().String() != header.SourceIP {
+	if err != nil {
+		if d, _ := ctx.Value(publicVisitorDiagnosticKey{}).(*publicVisitorDiagnostic); d != nil {
+			d.cause = err
+		}
+		return ErrPrivateStream
+	}
+	if metadata.Source.Addr().String() != header.SourceIP {
 		return ErrPrivateStream
 	}
 	if header.PublicService != nil && (metadata.Destination.Port() != header.PublicService.DestinationPort ||
@@ -692,10 +706,12 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 		// a newer signed delegation can wait for background policy installation
 		// within this same setup deadline; it cannot authorize against old policy.
 		reader := bufio.NewReader(replay)
+		markPublicVisitor(ctx, "read_first_visitor_byte")
 		if _, err := reader.Peek(1); err != nil {
 			return err
 		}
 		check, stop := context.WithDeadline(ctx, deadline)
+		markPublicVisitor(ctx, "check_visitor_source")
 		err = b.checkVisitorSource(check, header, metadata, proof)
 		stop()
 		if err != nil {
@@ -776,6 +792,9 @@ func (b *Bound) serveBody(ctx context.Context, ref tunnelv1.ServicePublisherConn
 	connection := &replayConn{Conn: serving, reader: replay}
 	if endStream != nil {
 		connection.endStream = func() error { return endStream(ctx) }
+	}
+	if d, _ := ctx.Value(publicVisitorDiagnosticKey{}).(*publicVisitorDiagnostic); d != nil {
+		ctx = observability.WithPublisherHTTPCompletion(ctx, d.observeHTTP)
 	}
 	return b.forwardManaged(ctx, connection, b.prepared.managedVisitor(header, metadata.Source, reserveCapacity), authority, nil)
 }
@@ -905,6 +924,18 @@ func (b *Bound) forwardManaged(ctx context.Context, stream net.Conn, visitor ser
 		HTTPProxy: b.prepared.httpProxy,
 		Authority: authority,
 		TLS:       b.prepared.visitorTLS, TargetTLS: targetTLS, Visitor: visitor}
+	if d, _ := ctx.Value(publicVisitorDiagnosticKey{}).(*publicVisitorDiagnostic); d != nil {
+		d.step = "visitor_tls"
+		managed.ObserveHTTPSetup = func(tlsDone bool) {
+			if tlsDone {
+				d.step = "admit_http"
+				d.tls = time.Since(d.started)
+			} else {
+				d.step = "serve_http"
+				d.setup = time.Since(d.started)
+			}
+		}
+	}
 	return managed.Forward(ctx, stream)
 }
 

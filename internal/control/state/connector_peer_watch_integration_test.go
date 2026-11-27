@@ -2,16 +2,69 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/url"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
+
+func TestIntegrationConnectorPeerWatchDiagnosesPoolVsQueryWait(t *testing.T) {
+	d, _, _, _ := newConnectorPairPrerequisites(t)
+	cfg := d.pool.Config()
+	cfg.MinConns, cfg.MaxConns = 0, 1
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	reader := &Database{pool: pool}
+	watched := []ConnectorPeerWatchVersion{{RunID: mustOpaqueID(t, opaqueid.ServiceRunPrefix), Revision: -1}}
+	check := func(phase string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+		_, err := reader.CompareConnectorPeerWatchVersions(ctx, watched)
+		var detail *WatchComparisonFailure
+		if !errors.As(err, &detail) || detail.Phase != phase {
+			t.Fatalf("want %s timeout; got %+v (%v)", phase, detail, err)
+		}
+		if detail.Acquire <= 0 || detail.Work < 0 {
+			t.Fatalf("comparison recorded invalid timings: acquire=%s work=%s", detail.Acquire, detail.Work)
+		}
+		if phase == "acquire_counters" && detail.Acquire < 150*time.Millisecond || phase == "read_counters" && detail.Work < 150*time.Millisecond {
+			t.Fatalf("comparison put time in the wrong phase: acquire=%s work=%s", detail.Acquire, detail.Work)
+		}
+	}
+	t.Run("pool", func(t *testing.T) {
+		conn, err := pool.Acquire(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+		check("acquire_counters")
+	})
+	t.Run("query", func(t *testing.T) {
+		tx, err := d.pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rollbackTestTransaction(t, tx)
+		if _, err := tx.Exec(t.Context(), `LOCK TABLE control.read_dependency_versions IN ACCESS EXCLUSIVE MODE`); err != nil {
+			t.Fatal(err)
+		}
+		check("read_counters")
+	})
+	if _, err := reader.CompareConnectorPeerWatchVersions(t.Context(), watched); err != nil {
+		t.Fatal("diagnosing stalled work left the pool unusable", err)
+	}
+}
 
 func TestIntegrationConnectorPeerWatchCommittedChanges(t *testing.T) {
 	d, now, _, leases := newConnectorPairPrerequisites(t)

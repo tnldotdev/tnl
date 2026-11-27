@@ -35,10 +35,19 @@ func Write(response http.ResponseWriter, status int, code, title, detail, caseID
 // WriteWithDetails sends the same envelope with diagnostic fields approved by
 // the serving API. callers own field selection and validation, not wire framing.
 func WriteWithDetails(response http.ResponseWriter, status int, code, title, detail, caseID string, details map[string]any) string {
+	return writeWithRequestID(response, NewRequestID(), status, code, title, detail, caseID, details)
+}
+
+// WriteWithRequestID reuses a locally generated request ID when a shared
+// operation has already recorded it. never pass an ID from an incoming request.
+func WriteWithRequestID(response http.ResponseWriter, requestID string, status int, code, title, detail, caseID string) {
+	writeWithRequestID(response, requestID, status, code, title, detail, caseID, nil)
+}
+
+func writeWithRequestID(response http.ResponseWriter, requestID string, status int, code, title, detail, caseID string, details map[string]any) string {
 	if details == nil {
 		details = map[string]any{}
 	}
-	requestID := NewRequestID()
 	response.Header().Set("Link", "<"+HelpURL(code, caseID)+">; rel=\"help\"")
 	value := Problem{
 		Type: URL(code), Title: title, Status: status, Code: code, Detail: detail,

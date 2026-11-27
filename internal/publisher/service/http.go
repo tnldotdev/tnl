@@ -14,6 +14,7 @@ import (
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
 	"github.com/tnldotdev/tnl/internal/naming"
 	"github.com/tnldotdev/tnl/internal/naming/opaqueid"
+	"github.com/tnldotdev/tnl/internal/observability"
 	"github.com/tnldotdev/tnl/internal/observability/inspection"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 	"github.com/tnldotdev/tnl/internal/policy/serviceendpoint"
@@ -337,6 +338,7 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			// report the decision before an upgrade or long-lived response.
 			outcome, reason = "allowed", ""
 			report()
+			observability.PublisherHTTPApplicationEntered(r.Context())
 			next.ServeHTTP(w, r)
 		})
 	}

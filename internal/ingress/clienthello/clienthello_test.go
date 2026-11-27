@@ -198,7 +198,7 @@ func TestInspectClientHelloRejectsInvalidInput(t *testing.T) {
 		{
 			name:  "truncated record",
 			input: []byte{handshakeRecord, 3, 1, 0, 10, 1},
-			code:  ErrorMalformedClientHello,
+			code:  ErrorIncompleteClientHello,
 		},
 		{
 			name:  "oversized record",

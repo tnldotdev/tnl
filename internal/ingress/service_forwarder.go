@@ -30,14 +30,14 @@ func (f *Forwarder) OpenService(ctx context.Context, relay ingressv1.ServiceRela
 	for attempt := 0; ; attempt++ {
 		session, reused, err := f.session(ctx, target)
 		if err != nil {
-			return nil, err
+			return nil, &tunnel.OpeningError{Step: "get_relay_session", Err: err}
 		}
 		started := time.Now()
 		unregister := func() {}
 		if reserve != nil {
 			unregister, err = session.RegisterServiceCapacity(f.context, header, reserve)
 			if err != nil {
-				return nil, err
+				return nil, &tunnel.OpeningError{Step: "register_capacity", Err: err}
 			}
 		}
 		stream, err := session.OpenServiceForwardingStream(ctx, header)

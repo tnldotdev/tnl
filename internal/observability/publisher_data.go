@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tnldotdev/tnl/internal/failure/diagnostic"
@@ -174,10 +175,40 @@ func PublisherTLS(ctx context.Context, leg string, state tls.ConnectionState, er
 
 type httpObservationKey struct{}
 type httpObservation struct {
-	mu         sync.Mutex
-	origin     string
-	err        error
-	forwarding bool
+	mu                 sync.Mutex
+	origin             string
+	err                error
+	forwarding         bool
+	applicationEntered bool
+}
+
+type PublisherHTTPCompletion struct {
+	RequestNumber         uint64
+	ApplicationEntered    bool
+	HeadersAfter, Elapsed time.Duration
+	HeadersStarted        bool
+	Status                int
+	Err                   error
+}
+
+type httpCompletionKey struct{}
+type httpCompletion struct {
+	next    atomic.Uint64
+	observe func(context.Context, PublisherHTTPCompletion)
+}
+
+func WithPublisherHTTPCompletion(ctx context.Context, observe func(context.Context, PublisherHTTPCompletion)) context.Context {
+	return context.WithValue(ctx, httpCompletionKey{}, &httpCompletion{observe: observe})
+}
+
+// PublisherHTTPApplicationEntered marks the authorized handoff to an
+// application handler or target proxy, not the start of a response.
+func PublisherHTTPApplicationEntered(ctx context.Context) {
+	if o, ok := ctx.Value(httpObservationKey{}).(*httpObservation); ok {
+		o.mu.Lock()
+		o.applicationEntered = true
+		o.mu.Unlock()
+	}
 }
 
 // PublisherHTTPForward marks the proxy's target boundary after request admission.
@@ -284,6 +315,11 @@ func PublisherHTTP(next http.Handler) http.Handler {
 			defer m.publisherData.httpActive.Add(ctx, -1, metric.WithAttributes(attrs...))
 		}
 		started := time.Now()
+		completion, _ := ctx.Value(httpCompletionKey{}).(*httpCompletion)
+		var requestNumber uint64
+		if completion != nil {
+			requestNumber = completion.next.Add(1)
+		}
 		writer := &publisherHTTPWriter{ResponseWriter: w, ctx: ctx}
 		if r.Body != nil {
 			r.Body = &publisherBody{ReadCloser: r.Body, ctx: ctx, direction: "visitor_to_target"}
@@ -291,7 +327,7 @@ func PublisherHTTP(next http.Handler) http.Handler {
 		defer func() {
 			interrupted := recover()
 			o.mu.Lock()
-			origin, err := o.origin, o.err
+			origin, err, entered := o.origin, o.err, o.applicationEntered
 			o.mu.Unlock()
 			if ctx.Err() != nil {
 				err = context.Cause(ctx)
@@ -328,6 +364,13 @@ func PublisherHTTP(next http.Handler) http.Handler {
 				if !writer.headers.IsZero() {
 					m.publisherData.httpHeaders.Record(ctx, writer.headers.Sub(started).Seconds(), metric.WithAttributes(final...))
 				}
+			}
+			if completion != nil {
+				result := PublisherHTTPCompletion{RequestNumber: requestNumber, ApplicationEntered: entered, Elapsed: time.Since(started), Status: writer.status, Err: err}
+				if !writer.headers.IsZero() {
+					result.HeadersStarted, result.HeadersAfter = true, writer.headers.Sub(started)
+				}
+				completion.observe(ctx, result)
 			}
 			if interrupted != nil {
 				panic(interrupted)
