@@ -1,4 +1,4 @@
-import { contentType, WASM_PATH, type Release } from "../release.ts";
+import { contentType, type Release } from "../release.ts";
 
 // opt in only on an explicit gzip offer with a nonzero quality.
 function acceptsGzip(request: Request) {
@@ -10,7 +10,7 @@ function acceptsGzip(request: Request) {
 
 export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayBuffer>) {
   const assets = new Map(release.assets.map((asset) => [asset.path, asset]));
-  let gzip: Promise<ArrayBuffer | undefined> | undefined;
+  const compressed = new Map<string, Promise<ArrayBuffer | undefined>>();
   return async (request: Request): Promise<Response> => {
     const { pathname, search } = new URL(request.url);
     const asset = assets.get(pathname === "/" ? "/index.html" : pathname);
@@ -22,19 +22,22 @@ export function serveRelease(release: Release, files: ReadonlyMap<string, ArrayB
     const headers = new Headers({
       "Cache-Control": "no-store",
       "Content-Type": contentType(asset.path) ?? "application/octet-stream",
+      Vary: "Accept-Encoding",
     });
-    if (asset.path === WASM_PATH) {
-      headers.set("Vary", "Accept-Encoding");
-      if (typeof CompressionStream !== "undefined" && acceptsGzip(request)) {
-        // share one compressed copy for this turn, including concurrent readers.
-        gzip ??= new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")))
+    if (typeof CompressionStream !== "undefined" && acceptsGzip(request)) {
+      // share one compressed copy of each pinned asset for this turn.
+      let gzip = compressed.get(asset.path);
+      if (gzip === undefined) {
+        gzip = new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")))
           .arrayBuffer()
+          .then((encoded) => (encoded.byteLength < bytes.byteLength ? encoded : undefined))
           .catch(() => undefined);
-        const encoded = await gzip;
-        if (encoded !== undefined && encoded.byteLength < bytes.byteLength) {
-          headers.set("Content-Encoding", "gzip");
-          return new Response(encoded, { headers });
-        }
+        compressed.set(asset.path, gzip);
+      }
+      const encoded = await gzip;
+      if (encoded !== undefined) {
+        headers.set("Content-Encoding", "gzip");
+        return new Response(encoded, { headers });
       }
     }
     return new Response(bytes, { headers });

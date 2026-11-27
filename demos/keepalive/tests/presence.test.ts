@@ -3,14 +3,9 @@ import { createVisitorCheck, renewPresence } from "../src/page/visitor.ts";
 import { HTTPFailure, NO_HOST_HEADER, TransportFailure } from "../src/network.ts";
 import { digest, RELEASE_PATH, WASM_PATH, WORKER_PATH } from "../src/release.ts";
 import { REPLACE_BEFORE_MS, STARTUP_MS } from "../src/policy.ts";
-import {
-  FRESH_REPORT_MS,
-  Gossip,
-  HOST_PARENT,
-  PEERS_PATH,
-  reportedTabs,
-  type Host,
-} from "../src/peers/gossip.ts";
+import { Gossip, reportedTabs } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, type Host } from "../src/peers/host.ts";
+import { FRESH_REPORT_MS } from "../src/peers/report.ts";
 import {
   MAX_TABS_PER_HOST,
   AUDIENCE_PATH,

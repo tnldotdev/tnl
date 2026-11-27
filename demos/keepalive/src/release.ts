@@ -1,4 +1,4 @@
-import * as z from "zod";
+import * as z from "zod/mini";
 import { request, requireStatus, retryOnce, TransportFailure } from "./network.ts";
 
 export const RELEASE_PATH = "/__keepalive/release";
@@ -19,18 +19,18 @@ const media = new Map([
 const sha256Hex = /^[a-f0-9]{64}$/;
 
 const assetSchema = z.strictObject({
-  path: z
-    .string()
-    .max(160)
-    .regex(/^(?:\/[a-z0-9][a-z0-9_-]*)*\/[a-z0-9][a-z0-9_-]*\.[a-z0-9]+$/)
-    .refine((path) => contentType(path) !== undefined),
-  size: z.int().min(1).max(MAX_ASSET_BYTES),
-  sha256: z.string().regex(sha256Hex),
+  path: z.string().check(
+    z.maxLength(160),
+    z.regex(/^(?:\/[a-z0-9][a-z0-9_-]*)*\/[a-z0-9][a-z0-9_-]*\.[a-z0-9]+$/),
+    z.refine((path) => contentType(path) !== undefined),
+  ),
+  size: z.int().check(z.minimum(1), z.maximum(MAX_ASSET_BYTES)),
+  sha256: z.string().check(z.regex(sha256Hex)),
 });
 
 export const releaseSchema = z.strictObject({
-  id: z.string().regex(sha256Hex),
-  assets: z.array(assetSchema).max(64),
+  id: z.string().check(z.regex(sha256Hex)),
+  assets: z.array(assetSchema).check(z.maxLength(64)),
 });
 
 export type Asset = z.infer<typeof assetSchema>;

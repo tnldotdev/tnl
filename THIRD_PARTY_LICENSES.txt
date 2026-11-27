@@ -2764,6 +2764,34 @@ Copyright (c) 2015-present Jason Miller
 License text: [MIT-1]
 
 --------------------------------------------------------------------------------
+Package: @tanstack/solid-query
+Version: 5.106.1
+License: MIT
+Source: https://www.npmjs.com/package/@tanstack/solid-query/v/5.106.1
+
+LICENSE
+
+MIT License
+
+Copyright (c) 2021-present Tanner Linsley
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
+Package: solid-js
+Version: 1.9.20
+License: MIT
+Source: https://www.npmjs.com/package/solid-js/v/1.9.20
+
+LICENSE
+
+MIT License
+
+Copyright (c) 2016-2025 Ryan Carniato
+
+License text: [MIT-1]
+
+--------------------------------------------------------------------------------
 Package: zod
 Version: 4.6.7
 License: MIT

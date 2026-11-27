@@ -6,7 +6,14 @@ From the repository root:
 
 ```sh
 mise exec -- task js:keepalive:test
+mise exec -- task js:keepalive:test:browser
 ```
+
+The routine tests build the page and budget the whole initial script graph
+(115 KB minified / 35 KB gzip), plus all optional scripts (160 KB / 58 KB).
+The browser check runs that build under the site's CSP in Chrome with fixture
+peers and a fixture publisher worker. It checks background check-ins, host
+reports, asset verification, volunteering, stopping and failed lazy loads.
 
 `task js:keepalive:handoff` uses Chrome and an empty test deployment to check
 browser handoffs, certificate reuse, final-host outage, and restart.

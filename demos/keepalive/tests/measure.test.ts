@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { observeInfrastructure } from "./infra-samples.ts";
 import { copyTransfers, distribution, periodic, probeHost } from "./measure.ts";
-import { HOST_PARENT } from "../src/peers/gossip.ts";
+import { HOST_PARENT } from "../src/peers/host.ts";
 import { digest } from "../src/release.ts";
 
 const host = {

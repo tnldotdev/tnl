@@ -1,23 +1,26 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import * as z from "zod";
+import * as z from "zod/mini";
 import {
   Gossip,
-  HOST_PARENT,
-  MAX_MESSAGE_BYTES,
-  PEERS_PATH,
   PROBE_MS,
+  parseMessage,
+  hostDetailsSchema,
+  type Change,
+  type GossipMessage,
+} from "./gossip.ts";
+import {
+  HOST_PARENT,
+  PEERS_PATH,
   hostIdentity,
   hostOrigin,
   hostSchema,
   runIDSchema,
-  parseMessage,
-  hostDetailsSchema,
   sameRun,
-  type Change,
-  type GossipMessage,
   type Host,
-} from "./gossip.ts";
+} from "./host.ts";
+import { MAX_MESSAGE_BYTES } from "./report.ts";
+import { InvitationUnavailable } from "./invitation.ts";
 import {
   heartbeatSchema,
   PRESENCE_PATH,
@@ -25,7 +28,8 @@ import {
   sampledTab,
   TabLeases,
 } from "./presence.ts";
-import { MAX_FALLBACK_HOSTS, TREE_PATH, treeSample } from "./view.ts";
+import { TREE_PATH, treeSample } from "./view.ts";
+import { MAX_FALLBACK_HOSTS } from "./audience.ts";
 import { readBytes, readJSON } from "../release.ts";
 import { INVITATION_PATH, READY_HEADER, invitationSchema } from "../enrollment.ts";
 import { hostTarget, INVITATION_ACK_MS, STARTUP_MS, UPLOAD_BYTES, UPLOAD_MS } from "../policy.ts";
@@ -94,15 +98,9 @@ export async function waitForWork(host: Host, signal: AbortSignal) {
     credentials: "omit",
     method: "POST",
   });
-  return invitationSchema
-    .nullable()
+  return z
+    .nullable(invitationSchema)
     .parse(await readJSON(await requireStatus(response), 64, deadline));
-}
-
-export class InvitationUnavailable extends Error {
-  constructor(busy: boolean) {
-    super(busy ? "The host couldn't accept this upload." : "The hosting invitation expired.");
-  }
 }
 
 export async function checkUpload(host: Host, invitation: string, signal: AbortSignal) {

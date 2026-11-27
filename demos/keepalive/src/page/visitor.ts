@@ -1,8 +1,8 @@
-import { FRESH_REPORT_MS, sameRun, type Change, type Host } from "../peers/gossip.ts";
-import { readPeers } from "../peers/http.ts";
+import { sameRun, type Host } from "../peers/host.ts";
+import { FRESH_REPORT_MS, readReport, type ReportedHost } from "../peers/report.ts";
 import { AUDIENCE_PATH, heartbeatSchema, PRESENCE_PATH, sampledTab } from "../peers/presence.ts";
-import { audienceSnapshot, presenceSummary } from "../peers/view.ts";
-import type * as z from "zod";
+import { audienceSnapshot, presenceSummary } from "../peers/audience.ts";
+import type * as z from "zod/mini";
 import { loadRelease, readJSON } from "../release.ts";
 import {
   HTTPFailure,
@@ -18,10 +18,10 @@ export type Observation = Omit<z.infer<typeof presenceSummary>, "fallback">;
 class MissingPeerReport extends Error {}
 
 async function findCountingHost(releaseID: string, signal: AbortSignal, failed?: Host) {
-  const report = await readPeers(location.origin, releaseID, signal);
+  const report = await readReport(location.origin, releaseID, signal);
   if (report === undefined) throw new MissingPeerReport("No matching host report.");
   const now = Date.now();
-  const eligible = (peer: Change) =>
+  const eligible = (peer: ReportedHost) =>
     !peer.left &&
     (peer.endsAt ?? Infinity) > now &&
     now - peer.reportedAt < FRESH_REPORT_MS &&
@@ -109,7 +109,7 @@ export function createVisitorCheck() {
           return await renewPresence(host, tab, currentRelease, deadline);
         } catch (error) {
           // dead cached hosts do not prove the site is down. ask the proxy.
-          if (alternate !== undefined) await readPeers(location.origin, currentRelease, deadline);
+          if (alternate !== undefined) await readReport(location.origin, currentRelease, deadline);
           throw error;
         }
       });

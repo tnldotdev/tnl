@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
-    "jsx": "react-jsx",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "noEmit": true,
     "resolveJsonModule": true,

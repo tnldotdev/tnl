@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/gossip.ts";
+import { HOST_PARENT, PEERS_PATH, SHARED_HOST } from "../src/peers/host.ts";
 import { createProxy } from "../src/edge/proxy.ts";
 import { WASM_PATH, WORKER_PATH, digest, parseRelease } from "../src/release.ts";
 import { NO_HOST_HEADER } from "../src/network.ts";
@@ -312,7 +312,18 @@ it("switches away from a host silent before headers and lets the next body finis
 it("records why a public 503 had no eligible host without copying request data", async () => {
   const reportFile = vi.fn();
   const { proxy, fetchHost } = await setup(reportFile);
-  fetchHost.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  fetchHost.mockResolvedValueOnce(
+    new Response("cloudflare private body", {
+      status: 503,
+      headers: {
+        "CF-Ray": "a60235872cf36cfe-IAD",
+        "CF-Error-Type": "522",
+        "CF-Error-Origin": "edge",
+        Server: "cloudflare",
+        "Tnl-Error-Code": "not a diagnostic code",
+      },
+    }),
+  );
   const response = await proxy.file(
     request("/", { headers: { "CF-Ray": "untrusted value", Authorization: "Bearer secret" } }),
   );
@@ -340,6 +351,18 @@ it("records why a public 503 had no eligible host without copying request data",
         bodyOrValidationMs: expect.any(Number),
         searchBudgetLeftMs: expect.any(Number),
         elapsedMs: expect.any(Number),
+        upstream: {
+          ray: "a60235872cf36cfe-IAD",
+          tnlErrorCode: null,
+          publisher: false,
+          runID: null,
+          server: "cloudflare",
+          cfErrorType: "522",
+          cfErrorOrigin: "edge",
+          visitorConnectionID: null,
+          capacityFailure: null,
+          body: "cloudflare",
+        },
       },
     ],
   });

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import * as z from "zod";
+import * as z from "zod/mini";
 import { readJSON } from "../src/release.ts";
 import { periodic, type RecordSample } from "./measure.ts";
 
@@ -8,14 +8,17 @@ import { periodic, type RecordSample } from "./measure.ts";
 const settings = z.strictObject({
   endpoint: z.url({ protocol: /^https?$/ }),
   queries: z
-    .record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.string().min(1).max(2048))
-    .refine((q) => Object.keys(q).length > 0 && Object.keys(q).length <= 32),
+    .record(
+      z.string().check(z.regex(/^[a-z][a-z0-9_]{0,63}$/)),
+      z.string().check(z.minLength(1), z.maxLength(2048)),
+    )
+    .check(z.refine((q) => Object.keys(q).length > 0 && Object.keys(q).length <= 32)),
 });
 const instant = z.object({
   status: z.literal("success"),
   data: z.object({
     resultType: z.literal("vector"),
-    result: z.array(z.object({ value: z.tuple([z.number(), z.string()]) })).length(1),
+    result: z.array(z.object({ value: z.tuple([z.number(), z.string()]) })).check(z.length(1)),
   }),
 });
 

@@ -1,5 +1,5 @@
 import { browserHostName } from "../peers/host-names.ts";
-import type { Host } from "../peers/gossip.ts";
+import type { Host } from "../peers/host.ts";
 import {
   ARTIFACT_PREFIX,
   WORKER_PATH,

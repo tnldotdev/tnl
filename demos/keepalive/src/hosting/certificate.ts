@@ -1,5 +1,5 @@
 import type { ExportedCertificate } from "@tnldotdev/tnl";
-import * as z from "zod";
+import * as z from "zod/mini";
 import { STARTUP_MS, turnLength } from "../policy.ts";
 import { digest, readJSON } from "../release.ts";
 
@@ -11,18 +11,18 @@ const RENEW_MS = 24 * 60 * 60_000;
 
 export const certificateBundle = z.strictObject({
   certificate: z.strictObject({
-    certificatePEM: z.string().min(1).max(131072),
-    privateKeyPEM: z.string().min(1).max(16384),
+    certificatePEM: z.string().check(z.minLength(1), z.maxLength(131072)),
+    privateKeyPEM: z.string().check(z.minLength(1), z.maxLength(16384)),
   }),
-  expiresAt: z.int().positive(),
+  expiresAt: z.int().check(z.positive()),
 });
 export const inheritedCertificate = z.strictObject({
   bundle: certificateBundle,
-  knownHosts: z.int().positive(),
+  knownHosts: z.int().check(z.positive()),
 });
 export const certificateReport = z.strictObject({
-  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  expiresAt: z.int().positive(),
+  fingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
+  expiresAt: z.int().check(z.positive()),
 });
 export type CertificateReport = z.infer<typeof certificateReport>;
 

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { fleets } from "../src/fleets.ts";
-import { hostOrigin } from "../src/peers/gossip.ts";
+import { hostOrigin } from "../src/peers/host.ts";
 import config from "../tnl.config.ts";
 
 it.each(["prod", "ramp"] as const)("isolates the %s deployment and its exact donors", (name) => {

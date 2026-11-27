@@ -1,5 +1,5 @@
-import * as z from "zod";
-import { httpsOriginSchema } from "../peers/gossip.ts";
+import * as z from "zod/mini";
+import { httpsOriginSchema } from "../peers/host.ts";
 import { readJSON } from "../release.ts";
 
 export const HOSTING_SERVICE = "production";
@@ -12,7 +12,8 @@ export type DeploymentBindings = {
   DEPLOYMENT_CREDENTIAL?: string;
 };
 
-const opaqueID = (prefix: string) => z.string().regex(new RegExp(`^${prefix}_[A-Za-z0-9]{22}$`));
+const opaqueID = (prefix: string) =>
+  z.string().check(z.regex(new RegExp(`^${prefix}_[A-Za-z0-9]{22}$`)));
 
 const credentialSchema = z.strictObject({
   version: z.literal(1),
@@ -24,20 +25,20 @@ const credentialSchema = z.strictObject({
     client_id: opaqueID("pub"),
     key_id: opaqueID("pkey"),
     grant_id: opaqueID("pgrant"),
-    expires_at: z.iso.datetime({ offset: true }).transform(Date.parse),
+    expires_at: z.pipe(z.iso.datetime({ offset: true }), z.transform(Date.parse)),
     all_deployments: z.literal(false),
     deployment_ids: z.tuple([opaqueID("dpl")]),
     permissions: z.strictObject({
       manage: z.strictObject({ [HOSTING_SERVICE]: z.literal("http") }),
     }),
   }),
-  private_key: z.string().length(86),
+  private_key: z.string().check(z.length(86)),
 });
 
 const tokenResponse = z.strictObject({
-  access_token: z.string().regex(/^pta_[A-Za-z0-9_-]{43}$/),
+  access_token: z.string().check(z.regex(/^pta_[A-Za-z0-9_-]{43}$/)),
   token_type: z.literal("Bearer"),
-  expires_in: z.int().min(1).max(300),
+  expires_in: z.int().check(z.minimum(1), z.maximum(300)),
   grant_id: opaqueID("pgrant"),
 });
 

@@ -1,24 +1,22 @@
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { hostWordsVite } from "./scripts/host-words.ts";
+import solid from "vite-plugin-solid";
 
 export default defineConfig({
   root: resolve(import.meta.dirname, "src/page"),
   server: { host: "127.0.0.1" },
+  plugins: [solid(), hostWordsVite],
   build: {
     outDir: resolve(import.meta.dirname, "dist/site"),
     emptyOutDir: true,
     modulePreload: false,
     rolldownOptions: {
-      output: { entryFileNames: "app.js", assetFileNames: "[name][extname]" },
-      onwarn(warning, warn) {
-        // this bundle only runs in the browser; it has no server components.
-        if (
-          warning.code === "MODULE_LEVEL_DIRECTIVE" &&
-          warning.id?.includes("/@tanstack/react-query/") &&
-          warning.message.includes('"use client"')
-        )
-          return;
-        warn(warning);
+      output: {
+        entryFileNames: "app.js",
+        chunkFileNames: "chunks/chunk-[hash].js",
+        hashCharacters: "hex",
+        assetFileNames: "[name][extname]",
       },
     },
   },

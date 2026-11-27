@@ -25,9 +25,14 @@ The main site never falls back to that seed copy.
 A Cloudflare Worker fetches each file from a hosting tab through tnl and checks
 its size and SHA-256. If it can't get a valid copy, it returns an empty `503`.
 
-When a volunteer copies the hosting code, its donor can send the large WASM
-file compressed. The volunteer checks the size and SHA-256 of the uncompressed
-bytes before running it.
+Hosts compress page assets and hosting code when the receiver accepts gzip
+and it saves bytes. The Worker and new volunteers check the size and SHA-256
+of the uncompressed bytes before using them.
+
+The page uses Solid and TanStack Query. Readers download the check-in code
+first; opening hosts loads the tree, and volunteering loads the copying and
+hosting code. Every script chunk is pinned in the release and copied by each
+new host. The introduction and links remain readable without JavaScript.
 
 An already-open tab stays on screen. If the Worker finds no reachable host,
 the clock resets and volunteering stops. A missed check alone doesn't reset

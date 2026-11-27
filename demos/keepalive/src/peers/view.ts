@@ -1,48 +1,26 @@
-import * as z from "zod";
-import {
-  audienceSchema,
-  hostDetailsSchema,
-  hostOrigin,
-  hostSchema,
-  releaseIDSchema,
-  runIDSchema,
-  type HostHistory,
-} from "./gossip.ts";
+import * as z from "zod/mini";
+import { hostDetailsSchema, type HostHistory } from "./gossip.ts";
+import { hostOrigin, runIDSchema } from "./host.ts";
 import { readJSON } from "../release.ts";
 import { request, requireStatus } from "../network.ts";
 
-const visibleHost = hostSchema.refine(({ origin }) => hostOrigin(origin));
-export const MAX_FALLBACK_HOSTS = 3;
 export const MAX_TREE_HOSTS = 96;
 export const TREE_PATH = "/__keepalive/tree";
-export const presenceSummary = z.strictObject({
-  host: visibleHost,
-  startedAt: z.int().nonnegative(),
-  tabs: z.int().nonnegative(),
-  hosts: z.int().positive(),
-  saturated: z.boolean(),
-  sampling: z.boolean().optional(),
-  fallback: z.array(visibleHost).max(MAX_FALLBACK_HOSTS),
-});
-export const audienceSnapshot = audienceSchema.extend({
-  releaseID: releaseIDSchema,
-  host: visibleHost,
-  startedAt: z.int().nonnegative(),
-});
-export const treeHost = hostDetailsSchema
-  .pick({
+export const treeHost = z.extend(
+  z.pick(hostDetailsSchema, {
     name: true,
     endsAt: true,
     copyFrom: true,
-  })
-  .extend({
+  }),
+  {
     runID: runIDSchema,
     left: z.boolean(),
-    unreachable: z.boolean().optional(),
-  });
+    unreachable: z.optional(z.boolean()),
+  },
+);
 const treeView = z.strictObject({
   hostRunID: runIDSchema,
-  hosts: z.array(treeHost).max(MAX_TREE_HOSTS),
+  hosts: z.array(treeHost).check(z.maxLength(MAX_TREE_HOSTS)),
 });
 
 export function treeSample(roster: readonly HostHistory[], focus: string) {

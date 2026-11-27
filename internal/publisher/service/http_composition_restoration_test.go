@@ -89,9 +89,16 @@ func compositionHTTP2Connection(t *testing.T, ctx context.Context, socket *tls.C
 	return connection
 }
 
-func newCompositionHTTPClient(t *testing.T, f *pendingHTTPFixture, slot uint8, h2 bool) *compositionHTTPClient {
+func newCompositionHTTPClient(t *testing.T, f *pendingHTTPFixture, slot uint8, h2 bool, change ...func(*tunnelv1.ServiceForwardingHeader)) *compositionHTTPClient {
 	t.Helper()
-	v := f.mustOpen(t, slot, pendingHTTPSource(int(slot)))
+	v, err := f.open(t, slot, pendingHTTPSource(int(slot)), func(header *tunnelv1.ServiceForwardingHeader) {
+		for _, apply := range change {
+			apply(header)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := v.raw.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal("set original HTTP visitor wire bound", err)
 	}
@@ -175,6 +182,115 @@ func TestServiceHTTPCompositionMisdirectedHTTP2RetryKeepsConnection(t *testing.T
 		t.Fatal("misdirection retired or re-admitted the original HTTP/2 connection")
 	}
 	assertHTTPAdmissionCharges(t, client.visitor.admission, 0, 0, 1)
+}
+
+func TestServiceHTTPAdmissionSurvivesCanceledFirstRequestPastSetupDeadline(t *testing.T) {
+	f := newPendingHTTPFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	entered, released, waiterLeft := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(released) })
+	defer release()
+	f.ingressMu.Lock()
+	f.ingress = func(call context.Context) error {
+		close(entered)
+		select {
+		case <-released:
+			return nil
+		case <-call.Done():
+			return context.Cause(call)
+		}
+	}
+	f.ingressMu.Unlock()
+	compositionHTTPFrontend(t, f, func(frontend *HTTP) {
+		reserve := frontend.ReserveCapacity
+		left := sync.OnceFunc(func() { close(waiterLeft) })
+		frontend.ReserveCapacity = func(call context.Context) error {
+			err := reserve(call)
+			if call.Err() != nil {
+				left()
+			}
+			return err
+		}
+	})
+	client := newCompositionHTTPClient(t, f, 0, true, func(header *tunnelv1.ServiceForwardingHeader) {
+		header.ExpiresAt = time.Now().Add(2 * time.Second)
+	})
+	before := f.current[0].wire.openings.Load()
+	first, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(first, http.MethodGet, "https://"+f.source.prepared.managedHostname+"/canceled", nil)
+	request.Header.Set("Authorization", "Bearer unchanged-application")
+	finished := make(chan error, 1)
+	go func() {
+		response, err := client.roundTrip(request)
+		if response != nil {
+			err = errors.Join(err, response.Body.Close())
+		}
+		finished <- err
+	}()
+	claimedAwait(t, entered)
+	cancel()
+	if err := claimedAwait(t, finished); !errors.Is(err, context.Canceled) {
+		t.Fatal("first HTTP/2 request did not leave independently", err)
+	}
+	claimedAwait(t, waiterLeft)
+	release()
+	a := client.visitor.admission
+	a.bound.mu.Lock()
+	decision := a.decision
+	a.bound.mu.Unlock()
+	claimedAwait(t, decision.done)
+	if decision.result != nil {
+		t.Fatal("request cancellation damaged connection admission", decision.result)
+	}
+	assertHTTPAdmissionCharges(t, a, 0, 0, 1)
+	// the connection was admitted on time, but no request observed that success.
+	// its next request must reuse the decision after the setup deadline passes.
+	timer := time.NewTimer(time.Until(client.visitor.header.ExpiresAt))
+	defer timer.Stop()
+	claimedAwait(t, timer.C)
+	pendingHTTPResponse(t, client.request(t, http.MethodGet, "/after-setup", "", "", ""), http.StatusNoContent)
+	if f.calls.Load() != 1 || f.capacity.Load() != 1 || f.current[0].wire.openings.Load()-before != 1 {
+		t.Fatal("later HTTP/2 request repeated admission or lost the original socket")
+	}
+	client.visitor.close()
+	client.visitor.join(t)
+	assertHTTPAdmissionCharges(t, a, 0, 0, 0)
+}
+
+func TestServiceHTTPFailedAdmissionRetiresHTTP2Connection(t *testing.T) {
+	for _, code := range []tunnelv1.ErrorCode{tunnelv1.CapacityExceeded, tunnelv1.Unavailable} {
+		t.Run(string(code), func(t *testing.T) {
+			f := newPendingHTTPFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			f.ingressMu.Lock()
+			f.ingress = func(context.Context) error { return &tunnel.ProtocolError{Code: code} }
+			f.ingressMu.Unlock()
+			client := newCompositionHTTPClient(t, f, 0, true)
+			response := client.request(t, http.MethodGet, "/rejected", "", "", "")
+			pendingHTTPResponse(t, response, http.StatusServiceUnavailable)
+			client.visitor.join(t)
+			assertHTTPAdmissionCharges(t, client.visitor.admission, 0, 0, 0)
+			f.ingressMu.Lock()
+			f.ingress = nil
+			f.ingressMu.Unlock()
+			request, _ := http.NewRequestWithContext(f.ctx, http.MethodGet, "https://"+f.source.prepared.managedHostname+"/old", nil)
+			if response, err := client.roundTrip(request); err == nil {
+				_ = response.Body.Close()
+				t.Fatal("failed HTTP/2 admission left a reusable connection")
+			}
+			if f.calls.Load() != 0 || f.capacity.Load() != 1 {
+				t.Fatal("failed connection retried admission or reached the application")
+			}
+			fresh := newCompositionHTTPClient(t, f, 0, true)
+			pendingHTTPResponse(t, fresh.request(t, http.MethodGet, "/fresh", "", "", ""), http.StatusNoContent)
+			if f.calls.Load() != 1 || f.capacity.Load() != 2 {
+				t.Fatal("retired connection did not release capacity for a fresh visitor")
+			}
+		})
+	}
 }
 
 func TestServiceHTTPCompositionVerifiedTLSGetThenHeadDenial(t *testing.T) {
@@ -322,7 +438,7 @@ func TestServiceHTTPCompositionOwnerProbeDoesNotWaitForHeldOrdinaryAdmission(t *
 
 func TestServiceHTTPCompositionProbeThenCachedApplicationRejection(t *testing.T) {
 	for _, h2 := range []bool{false, true} {
-		t.Run(map[bool]string{false: "http1-closes", true: "http2-caches"}[h2], func(t *testing.T) {
+		t.Run(map[bool]string{false: "http1-closes", true: "http2-closes"}[h2], func(t *testing.T) {
 			f := newPendingHTTPFixture(t, 1, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !httpstream.IsReadinessProbe(r) {
 					t.Error("ordinary request bypassed the relay's capacity rejection")
@@ -340,9 +456,11 @@ func TestServiceHTTPCompositionProbeThenCachedApplicationRejection(t *testing.T)
 				t.Fatal("owner probe spent ordinary connection admission")
 			}
 			for attempt := range 2 {
-				if attempt != 0 && !h2 {
+				if attempt != 0 {
 					client.visitor.join(t)
-					client = newCompositionHTTPClient(t, f, 0, false)
+					// the old connection retains its rejection, so the next
+					// request must get a new connection-owned decision.
+					client = newCompositionHTTPClient(t, f, 0, h2)
 				}
 				response := client.request(t, http.MethodGet, "/app", "", "", "")
 				if response.Close == h2 {
@@ -350,12 +468,8 @@ func TestServiceHTTPCompositionProbeThenCachedApplicationRejection(t *testing.T)
 				}
 				pendingHTTPResponse(t, response, http.StatusServiceUnavailable)
 			}
-			exchanges := int32(1)
-			if !h2 {
-				// a new HTTP/1 visitor owns its own decision after the deliberate
-				// Connection: close. HTTP/2 must retain the original rejection.
-				exchanges = 2
-			}
+			client.visitor.join(t)
+			exchanges := int32(2)
 			if f.calls.Load() != 1 || f.capacity.Load() != exchanges ||
 				f.current[0].wire.openings.Load()-before != exchanges {
 				t.Fatal("application rejection was not owned by its exact visitor connection")

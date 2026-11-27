@@ -81,8 +81,10 @@ type HTTP struct {
 	Source                netip.AddrPort
 	Requests              *requestlimit.HTTP
 	Policy                *visitorlease.Lease
-	ReserveCapacity       func(context.Context) error
-	browser               *httpaccess.Browser
+	// ReserveCapacity waits for the connection owner's retained decision. the
+	// owner, not this request, bounds setup and joins its capacity exchange.
+	ReserveCapacity func(context.Context) error
+	browser         *httpaccess.Browser
 	nativeHTTP
 	probes       *requestlimit.HTTP
 	preparations chan struct{}
@@ -193,15 +195,15 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 	if !enabled || view.Scope != f.Subject || view.Hostname != f.Hostname || view.Port != f.Port {
 		return servicestream.ErrEndpoint
 	}
-	// ingress reserves capacity for this connection. every request still needs
-	// its own local access check before it can use that capacity.
+	// the connection owner bounds and retains ingress admission independently
+	// of each waiter. a canceled first request may leave a successful decision;
+	// later requests must observe it even after the original setup deadline.
+	// every request still needs its own local access check.
 	var capacityReserved atomic.Bool
 	reserveCapacity := func(ctx context.Context) error {
 		if capacityReserved.Load() {
 			return ctx.Err()
 		}
-		ctx, cancel := context.WithDeadline(ctx, h.ExpiresAt)
-		defer cancel()
 		if err := f.ReserveCapacity(ctx); err != nil {
 			return err
 		}
@@ -311,6 +313,12 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			defer reservation.Finish()
 			if err := reserveCapacity(r.Context()); err != nil {
 				reservation.Refund()
+				// a failed connection decision cannot recover on this socket.
+				// its transport owner drains the denial and bounds cleanup.
+				// a canceled waiter leaves sibling requests live.
+				if r.Context().Err() == nil {
+					httpstream.RetireConnection(w, r, time.Now().Add(5*time.Second))
+				}
 				var capacity *tunnel.ProtocolError
 				if errors.As(err, &capacity) && capacity != nil && capacity.Code == tunnelv1.CapacityExceeded && failure.Only(err, capacity) {
 					reason = "capacity"
