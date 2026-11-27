@@ -481,7 +481,9 @@ func Serve(ctx context.Context, client net.Conn, target *url.URL, connect func(c
 		}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			observability.PublisherHTTPError(r.Context(), err)
 			hooks.ForwardingFailed(r)
-			w.Header().Set("Connection", "close")
+			if r.Context().Err() == nil {
+				RetireConnection(w, r, time.Now().Add(5*time.Second))
+			}
 			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if code, ok := diagnostic.CodeOf(err); ok {
 				diagnostic.WriteHTTP(w, r, code, "")
@@ -517,6 +519,19 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 	}
 	life, cancel := context.WithCancel(ctx)
 	defer cancel()
+	retirement := newConnectionRetirement()
+	life = context.WithValue(life, retirementKey{}, retirement)
+	fence, stopFence := context.WithCancel(life)
+	fenceDone := make(chan error, 1)
+	go func() {
+		fenceDone <- retirement.watch(fence, drain, cancel)
+	}()
+	defer func() {
+		stopFence()
+		// retain expiry even if the socket closes before the shutdown worker
+		// selects retirement. owner cancellation alone is normal cleanup.
+		result = errors.Join(result, <-fenceDone)
+	}()
 	var workers sync.WaitGroup
 	var callbacks sync.WaitGroup
 	callbacks.Add(1)
@@ -565,8 +580,16 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 		}()
 		select {
 		case <-drain.Started:
-			w.Header().Set("Connection", "close")
+			if r.ProtoMajor == 1 {
+				w.Header().Set("Connection", "close")
+			}
 			http.Error(w, "service is draining", http.StatusServiceUnavailable)
+			return
+		case <-retirement.started:
+			if r.ProtoMajor == 1 {
+				w.Header().Set("Connection", "close")
+			}
+			http.Error(w, "service connection is closing", http.StatusServiceUnavailable)
 			return
 		default:
 		}
@@ -597,17 +620,17 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 			shutdownDone <- nil
 		case <-life.Done():
 			shutdownDone <- nil
-		case <-drain.Started:
-			until := drain.Deadline()
-			// a zero or expired published deadline fails closed at actual drain.
-			shutdown, stop := context.WithDeadline(life, until)
-			defer stop()
-			// Shutdown does not track hijacked HTTP/1 connections. retain the
-			// deadline fence until those handlers and the connection worker join.
-			forced := make(chan struct{})
-			force := context.AfterFunc(shutdown, func() { defer close(forced); cancel() })
-			err := server.Shutdown(shutdown)
+		case <-retirement.started:
+			// the independent fence stays active until handlers and final
+			// framing join, even when Shutdown forgets hijacked connections.
+			err := server.Shutdown(life)
 			if err != nil {
+				// Shutdown returns the supplied context's error when interrupted.
+				// the fence reports retirement expiry separately; preserve actual
+				// close failures even when they contain cancellation themselves.
+				if err == life.Err() {
+					err = nil
+				}
 				cancel()
 				err = errors.Join(err, server.Close())
 			}
@@ -617,12 +640,6 @@ func ServeHandler(ctx context.Context, client net.Conn, handler http.Handler, dr
 			acceptHandlers = false
 			handlerMu.Unlock()
 			handlers.Wait()
-			if !force() {
-				<-forced
-			}
-			if err == nil {
-				err = shutdown.Err()
-			}
 			shutdownDone <- err
 		}
 	}()

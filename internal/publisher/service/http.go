@@ -312,10 +312,10 @@ func (f HTTP) Forward(ctx context.Context, client *tls.Conn, target servicestrea
 			if err := reserveCapacity(r.Context()); err != nil {
 				reservation.Refund()
 				// a failed connection decision cannot recover on this socket.
-				// net/http flushes the denial before closing HTTP/1 or sending
-				// HTTP/2 GOAWAY. a canceled waiter leaves sibling requests live.
+				// its transport owner drains the denial and bounds cleanup.
+				// a canceled waiter leaves sibling requests live.
 				if r.Context().Err() == nil {
-					w.Header().Set("Connection", "close")
+					httpstream.RetireConnection(w, r, time.Now().Add(5*time.Second))
 				}
 				var capacity *tunnel.ProtocolError
 				if errors.As(err, &capacity) && capacity != nil && capacity.Code == tunnelv1.CapacityExceeded && failure.Only(err, capacity) {
