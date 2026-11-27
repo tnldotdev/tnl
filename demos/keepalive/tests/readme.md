@@ -93,8 +93,8 @@ applying the Worker migration that retires its old reservations.
 Volunteer selection uses finite requests with 5–15 second retry jitter. Peer
 responses request connection closure, including HTTP/2 GOAWAY, so random probes
 and presence reports do not retain idle relay streams. Tabs report on arrival
-and renew about every 40 seconds. If a tab closes, its counting host drops
-the lease within two minutes; other hosts can see an older count.
+and renew about every two minutes. The counting host drops a tab six minutes
+after its last check-in; other hosts can see an older count.
 
 At an estimated 20,000 tabs, hosts start counting a stable one-in-four
 sample. They count each sampled tab as four and return to counting every
@@ -115,6 +115,10 @@ browser memory, relay load, and capacity rejections. Run multiple replacement
 cycles, a volunteer surge, slow transfers, and loss of either relay service.
 Count visitors separately from hosts. Configuration ceilings and simulations
 are not proof of real-browser throughput.
+
+Allow at least two minutes at each checkpoint when testing the normal check-in
+rate. At 100 hosts and 50 tabs per host, that's 5,000 check-ins in two minutes.
+Report shorter intervals separately as stress tests.
 
 ### match a failure before HTTP
 

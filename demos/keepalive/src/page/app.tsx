@@ -179,8 +179,11 @@ function App({ bootstrap }: { bootstrap: boolean }) {
     queryFn: ({ signal }) => checkVisitor(signal),
     // one check already tries multiple hosts. don't replay the whole heartbeat.
     retry: false,
-    refetchInterval: (query) =>
-      query.state.status === "error" ? 8_000 + Math.random() * 4_000 : HEARTBEAT_MS,
+    refetchInterval: ({ state }) => {
+      if (state.status === "error") return 8_000 + Math.random() * 4_000;
+      // keep looking for a new host at the old pace while nobody is serving.
+      return state.data === null ? 40_000 : HEARTBEAT_MS;
+    },
     refetchIntervalInBackground: true,
     staleTime: 5_000,
   });

@@ -2,7 +2,7 @@ import * as z from "zod";
 
 export const PRESENCE_PATH = "/__keepalive/presence";
 export const AUDIENCE_PATH = "/__keepalive/audience";
-export const HEARTBEAT_MS = 40_000;
+export const HEARTBEAT_MS = 2 * 60_000;
 export const TAB_LEASE_MS = 3 * HEARTBEAT_MS;
 export const SAMPLE_WEIGHT = 4;
 // other hosts' snapshots take longer to reach us than local heartbeats do.
