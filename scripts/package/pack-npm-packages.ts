@@ -35,7 +35,7 @@ try {
     await pack(stage, "native", {
       name: target.packageName,
       description: `The ${target.platform} ${target.architecture} binary for tnl.`,
-      repository: { type: "git", url: "https://github.com/tnldotdev/tnl" },
+      repository: { type: "git", url: "https://github.com/madebyentropy/tnl" },
       os: [target.platform],
       cpu: [target.architecture],
       files: ["bin", ...legalFiles],

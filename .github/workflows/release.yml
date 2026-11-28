@@ -12,6 +12,9 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  IMAGE: ghcr.io/madebyentropy/tnl
+
 jobs:
   validate:
     name: Validate release
@@ -190,8 +193,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/tnldotdev/tnl:${{ github.ref_name }}
-            ghcr.io/tnldotdev/tnl:${{ needs.validate.outputs.version }}
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:${{ needs.validate.outputs.version }}
           build-args: |
             VERSION=${{ needs.validate.outputs.version }}
             COMMIT=${{ github.sha }}
@@ -203,14 +206,13 @@ jobs:
       - name: Sign image
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
-          IMAGE: ghcr.io/tnldotdev/tnl
         run: cosign sign --yes "$IMAGE@$DIGEST"
 
       - name: Attest image provenance
         if: github.event.repository.visibility == 'public'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-name: ghcr.io/tnldotdev/tnl
+          subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
@@ -298,7 +300,6 @@ jobs:
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE: ghcr.io/tnldotdev/tnl
           TAG: ${{ github.ref_name }}
         run: |
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > "$RUNNER_TEMP/tnld-image-digest.txt"

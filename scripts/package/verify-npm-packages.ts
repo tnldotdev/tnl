@@ -28,7 +28,10 @@ for (const entry of metadata.packages.filter((p) => p.kind === "native")) {
     packageManifestSchema,
     "packed native manifest",
   );
-  assert.deepEqual(manifest.repository, { type: "git", url: "https://github.com/tnldotdev/tnl" });
+  assert.deepEqual(manifest.repository, {
+    type: "git",
+    url: "https://github.com/madebyentropy/tnl",
+  });
 }
 for (const manager of ["npm", "pnpm"]) {
   const consumer = await mkdtemp(path.join(tmpdir(), `tnl-${manager}-`));

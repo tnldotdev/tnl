@@ -14,12 +14,12 @@
   ],
   "homepage": "https://tnl.dev",
   "bugs": {
-    "url": "https://github.com/tnldotdev/tnl/issues"
+    "url": "https://github.com/madebyentropy/tnl/issues"
   },
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tnldotdev/tnl.git",
+    "url": "git+https://github.com/madebyentropy/tnl.git",
     "directory": "packages/ts"
   },
   "bin": {

@@ -1,7 +1,7 @@
 # connect from github actions
 
 Run migrations or deploy commands against your services from GitHub Actions.
-`tnldotdev/tnl/connect` opens the connections once and keeps them available to
+`madebyentropy/tnl/connect` opens the connections once and keeps them available to
 later steps in the same job.
 
 ## run a migration
@@ -51,7 +51,7 @@ jobs:
           runtime: node@22.23.4
           require-lockfile: true
       - run: pnpm install --frozen-lockfile
-      - uses: tnldotdev/tnl/connect@7b95306b02aadc34f77c7db3ac116c4030adf8c6
+      - uses: madebyentropy/tnl/connect@7b95306b02aadc34f77c7db3ac116c4030adf8c6
         with:
           workload: deploy
           services: database

@@ -1,6 +1,6 @@
 name: tnl connect
 description: Prepare connector connections for one saved tnl workload across job steps
-author: tnldotdev
+author: madebyentropy
 inputs:
   workload:
     description: Required workload key from the project's tnl configuration

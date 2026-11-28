@@ -344,7 +344,7 @@ permissions:
   id-token: write
 steps:
   # git checkout or package installation...
-  - uses: tnldotdev/tnl/connect@<sha>
+  - uses: madebyentropy/tnl/connect@<sha>
     with:
       workload: migrate
   - run: pnpm exec drizzle-kit migrate

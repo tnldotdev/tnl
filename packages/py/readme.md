@@ -31,4 +31,4 @@ An explicit publication can take a `ServiceCertificate` or a callback as `certif
 Use `await publication.export_certificate()` to read its installed chain, private
 key, and expiry. Treat the result as a secret.
 
-See the [publishing guide](https://tnl.dev/docs/publish), [quickstart](https://tnl.dev/docs), and [main README](https://github.com/tnldotdev/tnl#readme).
+See the [publishing guide](https://tnl.dev/docs/publish), [quickstart](https://tnl.dev/docs), and [main README](https://github.com/madebyentropy/tnl#readme).

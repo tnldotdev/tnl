@@ -52,7 +52,7 @@ await writeFile(formulaPath, formula);
 const run = promisify(execFile);
 await run("ruby", ["-c", formulaPath]);
 if (mode !== "--render-only") {
-  const endpoint = "repos/tnldotdev/homebrew-tap/contents/Formula/tnl.rb";
+  const endpoint = "repos/madebyentropy/homebrew-tap/contents/Formula/tnl.rb";
   const sha = await run("gh", ["api", endpoint, "--jq", ".sha"])
     .then(({ stdout }) => stdout.trim())
     .catch((error: unknown) => {

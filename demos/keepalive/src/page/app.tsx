@@ -450,7 +450,7 @@ function App({ bootstrap }: { bootstrap: boolean }) {
       <footer>
         an experiment from <a href="https://tnl.dev">tnl.dev</a> ·{" "}
         <a href="https://tnl.dev/blog/keepalive">how it works</a> ·{" "}
-        <a href="https://github.com/tnldotdev/tnl/tree/main/demos/keepalive">source</a>
+        <a href="https://github.com/madebyentropy/tnl/tree/main/demos/keepalive">source</a>
       </footer>
     </main>
   );
