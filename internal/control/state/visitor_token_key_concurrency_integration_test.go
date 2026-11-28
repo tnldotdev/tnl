@@ -79,6 +79,37 @@ func TestIntegrationVisitorSigningNoOpPreservesSnapshot(t *testing.T) {
 	}
 }
 
+func TestIntegrationVisitorSigningDoesNotHoldAnotherSigner(t *testing.T) {
+	d, now := newControlStateIntegrationDatabase(t, "visitor_signing_shared")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	permission := signingTestPermission(now)
+	if _, err := signStateTestPermission(ctx, d, testVisitorIssuer, permission, now); err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, first)
+	if _, err := d.signVisitorPermission(ctx, first, testVisitorIssuer, permission, now); err != nil {
+		t.Fatal(err)
+	}
+	progress, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	token, err := signStateTestPermission(progress, d, testVisitorIssuer, permission, now)
+	if err != nil {
+		t.Fatal("a paused signer blocked another issuance", err)
+	}
+	keys := stateTestVisitorKeys(t, d, now)
+	if _, err := visitortoken.VerifyBearer(token, stateTestVisitorView(permission, keys, now), now); err != nil {
+		t.Fatal("concurrent issuance did not retain its verification key", err)
+	}
+	if err := first.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func visitorSigningConcurrencySource(t *testing.T, d *Database, now time.Time) (context.Context, visitorscope.Scope) {
 	t.Helper()
 	request := oidcRouteRequest(t, d, now)

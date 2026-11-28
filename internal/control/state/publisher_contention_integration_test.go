@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,61 @@ import (
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/security/publisherproof"
 )
+
+func TestIntegrationPooledRunStartWaitIsRunScoped(t *testing.T) {
+	f := newServicePublicationFixture(t)
+	d, now := f.database, f.now
+	metadata := f.service.ServiceMetadata
+	metadata.PublisherPool = true
+	var err error
+	f.service, err = d.ConfigureService(t.Context(), f.service.ID, f.actor(t), metadata, nil, ServiceUpdateConditions{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment := publisherEnrollment(t, d, serviceTestAuthority{TeamID: f.service.TeamID, ActingIdentityID: f.actor(t)},
+		PublisherScope{TeamID: f.service.TeamID, Kind: "service", ServiceID: f.service.ID}, now)
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := d.RedeemPublisherEnrollment(t.Context(), enrollment.Key, public, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := d.PrepareServiceRun(t.Context(), f.service.ID, publisher, "parallel", now, ServiceRunRequest{Metadata: f.service.ServiceMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	gate, err := d.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollbackTestTransaction(t, gate)
+	if _, err := controlstatedb.New(gate).LockServiceRun(ctx, controlstatedb.LockServiceRunParams{ID: prepared.RunID, ServiceID: f.service.ID}); err != nil {
+		t.Fatal(err)
+	}
+	workers := newIntegrationWorkers(t, cancel)
+	defer workers.stop()
+	done := make(chan error, 1)
+	workers.Go(func() {
+		_, err := d.StartServiceRun(ctx, f.service.ID, prepared.RunID, prepared.RunNumber, publisher, now)
+		done <- err
+	})
+	waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), done)
+	progress, stop := context.WithTimeout(ctx, 2*time.Second)
+	defer stop()
+	if _, err := d.StartServiceRun(progress, f.service.ID, f.run.RunID, f.run.RunNumber, f.publisher, now); err != nil {
+		t.Fatal("a pooled run start blocked another publisher on the same service", err)
+	}
+	if err := gate.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := awaitIntegrationResult(t, ctx, done); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestIntegrationPublisherRuntimeWaitIsIdentityScoped(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_runtime_contention")

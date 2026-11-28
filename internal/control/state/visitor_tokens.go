@@ -213,6 +213,12 @@ func (d *Database) issueVisitorTokenTransaction(ctx context.Context, issuer stri
 	if err != nil {
 		return IssuedVisitorToken{}, err
 	}
+	if err := controlstatedb.New(tx).FlushChangePublications(ctx); err != nil {
+		return IssuedVisitorToken{}, err
+	}
+	if !result.Permission.ExpiresAt.After(clock.current()) {
+		return IssuedVisitorToken{}, ErrVisitorPermission
+	}
 	if _, registered := source.(RegisteredKeyTokenSource); registered {
 		commit, stop := context.WithDeadline(ctx, clock.started.Add(result.Permission.ExpiresAt.Sub(clock.entered)))
 		defer stop()

@@ -116,6 +116,16 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	    lease_expires_at=GREATEST(lease_expires_at,LEAST(renewed_at+interval '90 seconds',expires_at,GREATEST(identity_expires_at,$2))) WHERE id=$1`, id, time.Unix(c.ExpiresAt, 0)); err != nil {
 		return result, err
 	}
+	if err := controlstatedb.New(tx).FlushChangePublications(ctx); err != nil {
+		return result, err
+	}
+	current = clock.current()
+	if !row.LeaseExpiresAt.Time.After(current) || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(current) || !row.IdentityExpiresAt.Time.After(current) {
+		return result, ErrWorkloadExpired
+	}
+	if c.Validate(current) != nil {
+		return result, ErrWorkloadDenied
+	}
 	result, err = d.workloadSession(ctx, tx, id, clock.current())
 	if err != nil {
 		return result, err
