@@ -162,8 +162,8 @@ func TestIntegrationStateLockOrderCompanyDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, gate)
-	// signed ReadCompanyConnections owns bootstrap before requesting the team.
-	if err = controlstatedb.New(gate).LockIdentityBootstrap(ctx); err != nil {
+	// signed company operations own the issuer-subject guard before the team.
+	if err = controlstatedb.New(gate).LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: identity.Issuer, Subject: identity.Subject}); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

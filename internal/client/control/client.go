@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -246,7 +247,15 @@ func requestWithTimeoutAndLimit[T any](ctx context.Context, client *Client, time
 		return zero, unavailableError(ctx, err)
 	}
 	defer response.Body.Close()
-	payload, err := httpjson.ReadAll(response.Body, responseLimit)
+	if responseLimit == 0 && (response.StatusCode < 200 || response.StatusCode >= 300) {
+		responseLimit = maxResponseBytes
+	}
+	var payload []byte
+	if responseLimit == 0 {
+		payload, err = io.ReadAll(response.Body)
+	} else {
+		payload, err = httpjson.ReadAll(response.Body, responseLimit)
+	}
 	if errors.Is(err, httpjson.ErrTooLarge) {
 		return zero, failure.Wrap("read control response", failure.ServerResponseInvalid, errors.New("controlclient: response exceeds limit"))
 	}

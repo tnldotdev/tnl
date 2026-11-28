@@ -48,17 +48,10 @@ SELECT * FROM control.publisher_enrollments WHERE id = sqlc.arg(id) FOR UPDATE;
 -- name: RedeemPublisherEnrollment :exec
 UPDATE control.publisher_enrollments SET redeemed_identity_id = sqlc.arg(identity_id), redeemed_key_id = sqlc.arg(key_id), redeemed_grant_id = sqlc.arg(grant_id), redeemed_public_key = sqlc.arg(public_key), redeemed_at = sqlc.arg(now) WHERE id = sqlc.arg(id);
 
--- name: PrunePublisherAssertions :exec
-DELETE FROM control.publisher_assertions WHERE publisher_identity_id = sqlc.arg(publisher_identity_id) AND expires_at <= sqlc.arg(now);
-
 -- name: ClaimPublisherAssertion :execrows
 INSERT INTO control.publisher_assertions(publisher_identity_id, assertion_id, expires_at)
-SELECT sqlc.arg(publisher_identity_id), sqlc.arg(assertion_id), sqlc.arg(expires_at)
-WHERE (SELECT count(*) FROM control.publisher_assertions WHERE publisher_identity_id = sqlc.arg(publisher_identity_id)) < 256
+VALUES (sqlc.arg(publisher_identity_id), sqlc.arg(assertion_id), sqlc.arg(expires_at))
 ON CONFLICT DO NOTHING;
-
--- name: PrunePublisherAccess :exec
-DELETE FROM control.publisher_access_tokens WHERE publisher_identity_id = sqlc.arg(publisher_identity_id) AND expires_at <= sqlc.arg(now);
 
 -- name: InsertPublisherAccess :exec
 INSERT INTO control.publisher_access_tokens(access_token_digest, publisher_identity_id, grant_id, key_id, created_at, expires_at)

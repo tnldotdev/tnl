@@ -91,7 +91,8 @@ func TestIntegrationManagementReadersShareAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollbackTestTransaction(t, held)
-	if _, err := held.Exec(t.Context(), `SELECT pg_advisory_xact_lock_shared(837174137711267953)`); err != nil {
+	heldProof := managementActorProof(t, f.d, f.member.IdentityID, "shared-identity", f.now)
+	if err := controlstatedb.New(held).ObserveOIDCIdentity(t.Context(), controlstatedb.ObserveOIDCIdentityParams{Issuer: heldProof.Issuer, Subject: heldProof.Subject}); err != nil {
 		t.Fatal(err)
 	}
 	if err := lockServiceForRun(t.Context(), held, f.local.ID); err != nil {

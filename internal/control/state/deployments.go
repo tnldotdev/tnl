@@ -87,6 +87,9 @@ func lockDeploymentManager(ctx context.Context, tx pgx.Tx, scope DeploymentScope
 }
 
 func commitDeployment(ctx context.Context, tx pgx.Tx, scope DeploymentScope) error {
+	if err := controlstatedb.New(tx).FlushChangePublications(ctx); err != nil {
+		return err
+	}
 	// locks may have waited beyond a session's deadline or an identity change.
 	if err := serviceManager(ctx, tx, scope.TeamID, scope.ActorID); err != nil {
 		return err

@@ -156,14 +156,6 @@ func TestPublisherWatchCancellationAndScopeBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := &watchTestStore{}
 		watch := NewPublisherWatch(store)
-		if !watch.reserve(maxPublisherWatchScopes) || watch.reserve(1) {
-			t.Fatal("watch did not enforce its process-wide scope bound")
-		}
-		watch.release(maxPublisherWatchScopes)
-		if !watch.reserve(1) {
-			t.Fatal("watch did not release its scope budget")
-		}
-		watch.release(1)
 		ctx, stop := context.WithCancel(t.Context())
 		defer stop()
 		done := make(chan publisherWatchResult, 1)
@@ -200,6 +192,44 @@ func TestPublisherWatchQuietWaitDoesNotConfirmAnything(t *testing.T) {
 	})
 }
 
+func TestPublisherWatchDeliversBeyondFormerProcessCeiling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := &watchTestStore{}
+		watch := NewPublisherWatch(store)
+		ctx, stop := context.WithCancel(t.Context())
+		var group sync.WaitGroup
+		defer func() {
+			stop()
+			group.Wait()
+		}()
+		const total = 4097
+		results := make(chan publisherWatchResult, total)
+		for i := range total {
+			seen := []controlstate.ConnectorPeerWatchVersion{{RunID: strconv.Itoa(i), Revision: -1}}
+			group.Go(func() { results <- watch.wait(ctx, seen) })
+		}
+		synctest.Wait()
+		watch.compare(ctx)
+		for range total {
+			result := <-results
+			if result.err != nil || len(result.changes) != 1 || result.changes[0].Revision != 0 {
+				t.Fatalf("watch beyond old ceiling lost its change: %+v", result)
+			}
+		}
+		count := 0
+		for _, batch := range store.batches {
+			if len(batch) > controlstate.MaxConnectorPeerWatchBatch {
+				t.Fatal("inventory growth enlarged a database batch")
+			}
+			count += len(batch)
+		}
+		group.Wait()
+		if count != total || len(watch.waits) != 0 {
+			t.Fatalf("compared %d scopes and retained %d waits", count, len(watch.waits))
+		}
+	})
+}
+
 func TestPublisherWatchBoundsBatchesAndDoesNotKeepFailedBookmarks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := &watchTestStore{err: errors.New("unavailable")}
@@ -210,8 +240,9 @@ func TestPublisherWatchBoundsBatchesAndDoesNotKeepFailedBookmarks(t *testing.T) 
 			stop()
 			group.Wait()
 		}()
-		results := make(chan publisherWatchResult, maxPublisherWatchScopes/maxPublisherWatchRuns)
-		for start := 0; start < maxPublisherWatchScopes; start += maxPublisherWatchRuns {
+		const scopes = 4096
+		results := make(chan publisherWatchResult, scopes/maxPublisherWatchRuns)
+		for start := 0; start < scopes; start += maxPublisherWatchRuns {
 			scopes := make([]controlstate.ConnectorPeerWatchVersion, maxPublisherWatchRuns)
 			for i := range scopes {
 				scopes[i] = controlstate.ConnectorPeerWatchVersion{RunID: strconv.Itoa(start + i), Revision: -1}
@@ -365,9 +396,9 @@ func TestPublisherWatchAuthorizationTimeoutReturnsUnavailable(t *testing.T) {
 					r.Header.Set("Content-Type", "application/json")
 					w := httptest.NewRecorder()
 					testHandler(t, Config{PublisherWatch: watch}, nil, nil, nil).ServeHTTP(w, r)
-					if w.Code != tc.status || watch.used != 0 || store.authCalls != store.stallAt ||
+					if w.Code != tc.status || len(watch.waits) != 0 || store.authCalls != store.stallAt ||
 						strings.Contains(w.Body.String(), "changes") || strings.Contains(w.Body.String(), publisherCORSRun) {
-						t.Fatalf("watch timeout returned %d, reserved scopes %d", w.Code, watch.used)
+						t.Fatalf("watch timeout returned %d, retained waits %d", w.Code, len(watch.waits))
 					}
 					var problem controlv1.Problem
 					if json.Unmarshal(w.Body.Bytes(), &problem) != nil || problem.RequestId == "" ||

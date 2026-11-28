@@ -171,19 +171,12 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 	}
 	guests := make(map[string]pgtype.Text, len(owners))
 	teams := make(map[string]pgtype.Text, len(owners))
-	// serialize cursor allocation with commits once per owner, in the same
-	// owner order as parent locking. sequence order alone can skip a slow commit.
-	finalOwner := owners[len(owners)-1]
-	finalClock := controlstatedb.LockServiceAuditClockParams{TeamID: finalOwner.TeamID, GuestID: finalOwner.GuestID}
-	var locked controlstatedb.LockServiceAuditClockParams
-	for _, owner := range owners {
-		scope := controlstatedb.LockServiceAuditClockParams{TeamID: owner.TeamID, GuestID: owner.GuestID}
-		if scope != locked && scope != finalClock {
-			if err := q.LockServiceAuditClock(ctx, scope); err != nil {
-				return ServiceObservationResult{}, err
-			}
-			locked = scope
-		}
+	// deferred triggers acquire cursor clocks only at commit. preserve the
+	// same owner order across batches so those short critical sections cannot
+	// deadlock when an ingress report includes several teams.
+	order := make(map[string]int, len(owners))
+	for i, owner := range owners {
+		order[owner.ID] = i
 		guests[owner.ID], teams[owner.ID] = owner.GuestID, owner.TeamID
 	}
 	for _, event := range unique {
@@ -191,7 +184,8 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 			return ServiceObservationResult{}, ErrServiceAuditAccess
 		}
 	}
-	inserted, err := q.InsertServiceAuditEvents(ctx, auditInsertParams(unique, now, finalClock))
+	sort.SliceStable(unique, func(i, j int) bool { return order[unique[i].ServiceID] < order[unique[j].ServiceID] })
+	inserted, err := q.InsertServiceAuditEvents(ctx, auditInsertParams(unique, now))
 	if err != nil {
 		return ServiceObservationResult{}, err
 	}
@@ -225,11 +219,11 @@ func insertServiceAuditBatch(ctx context.Context, tx pgx.Tx, events []serviceaud
 	return ServiceObservationResult{Accepted: len(inserted), Duplicates: len(events) - len(inserted)}, nil
 }
 
-func auditInsertParams(events []serviceaudit.Event, now time.Time, clock controlstatedb.LockServiceAuditClockParams) controlstatedb.InsertServiceAuditEventsParams {
+func auditInsertParams(events []serviceaudit.Event, now time.Time) controlstatedb.InsertServiceAuditEventsParams {
 	n := len(events)
 	p := controlstatedb.InsertServiceAuditEventsParams{
-		TeamID: clock.TeamID, GuestID: clock.GuestID, ReceivedAt: timestamptz(now),
-		Ids: make([]string, n), Teams: make([]string, n), Services: make([]string, n),
+		ReceivedAt: timestamptz(now),
+		Ids:        make([]string, n), Teams: make([]string, n), Services: make([]string, n),
 		Kinds: make([]string, n), Times: make([]pgtype.Timestamptz, n),
 		Actors: make([]string, n), Devices: make([]string, n), Publishers: make([]string, n),
 		Runs: make([]string, n), Visitors: make([]string, n), Sources: make([]string, n),

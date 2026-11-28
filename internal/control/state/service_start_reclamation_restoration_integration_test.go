@@ -158,6 +158,11 @@ func TestIntegrationServiceStartReclamationRestoredExpiredFirstAttemptDoesNotCle
 		requested.prepared.RunID, at.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	// the initial ranking sees free capacity. the locked recheck must observe
+	// the concurrent reduction after the preparation's deadline passes.
+	if _, err := d.pool.Exec(ctx, `UPDATE control.relay_leases SET connection_capacity=2`); err != nil {
+		t.Fatal(err)
+	}
 	gate, err := d.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +170,9 @@ func TestIntegrationServiceStartReclamationRestoredExpiredFirstAttemptDoesNotCle
 	defer rollbackTestTransaction(t, gate)
 	key := "tnl:relay-service:" + old.run.Connections[0].RelayServiceID
 	if _, err := gate.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))`, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.Exec(ctx, `UPDATE control.relay_leases SET connection_capacity=1`); err != nil {
 		t.Fatal(err)
 	}
 	beforeOld := expirationProgressSnapshot(t, ctx, d, old.run.RunID)

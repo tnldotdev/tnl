@@ -35,7 +35,7 @@ func TestIntegrationVisitorIssuanceRetentionPreservesAuthoritySnapshot(t *testin
 	// another signer extends retention without changing the key, policy,
 	// source authority, or this permission's fixed deadline.
 	longer := initial.Permission
-	longer.ExpiresAt = longer.ExpiresAt.Add(time.Minute)
+	longer.ExpiresAt = longer.ExpiresAt.Add(time.Hour)
 	if _, err := signStateTestPermission(ctx, d, testVisitorIssuer, longer, now); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +62,11 @@ func TestIntegrationVisitorIssuanceNecessaryRetentionExtensionIsDurable(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	// previous binaries retain exact deadlines. exercise a populated key with
+	// that horizon and a concurrent legacy extension during a rolling upgrade.
+	if _, err := d.pool.Exec(ctx, `UPDATE control.visitor_token_keys SET retain_until=$1 WHERE retired_at IS NULL AND revoked_at IS NULL`, initial.Permission.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
 	at := now.Add(2 * time.Second)
 	tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
@@ -77,7 +82,11 @@ func TestIntegrationVisitorIssuanceNecessaryRetentionExtensionIsDurable(t *testi
 	if !authority.Permission.ExpiresAt.After(shorter.ExpiresAt) {
 		t.Fatal("fixture does not require a retention extension")
 	}
-	if _, err := signStateTestPermission(ctx, d, testVisitorIssuer, shorter, now); err != nil {
+	var key string
+	if err := d.pool.QueryRow(ctx, `SELECT id FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL`).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controlstatedb.New(d.pool).RetainVisitorTokenSigningKey(ctx, controlstatedb.RetainVisitorTokenSigningKeyParams{ID: key, ExpiresAt: timestamptz(shorter.ExpiresAt)}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = d.signVisitorPermission(ctx, tx, testVisitorIssuer, authority.Permission, at)
@@ -96,7 +105,7 @@ func TestIntegrationVisitorIssuanceNecessaryRetentionExtensionIsDurable(t *testi
 	if err != nil || !fresh.Permission.ExpiresAt.Equal(authority.Permission.ExpiresAt) {
 		t.Fatal("fresh decision lost the fixed permission deadline", err)
 	}
-	if err := d.pool.QueryRow(ctx, `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL`).Scan(&retained); err != nil || !retained.Equal(fresh.Permission.ExpiresAt) {
+	if err := d.pool.QueryRow(ctx, `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL`).Scan(&retained); err != nil || retained.Before(fresh.Permission.ExpiresAt) || retained.After(fresh.Permission.ExpiresAt.Add(time.Hour)) {
 		t.Fatal("necessary retention extension was not durable", retained, err)
 	}
 }

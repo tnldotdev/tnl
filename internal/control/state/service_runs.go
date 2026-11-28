@@ -86,11 +86,11 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 		return result, err
 	}
 	defer rollback(ctx, tx, "start service run", &retErr)()
-	if err = lockServiceForPublication(ctx, tx, service); err != nil {
+	if err = lockServiceForRun(ctx, tx, service); err != nil {
 		return result, err
 	}
 	q := controlstatedb.New(tx)
-	endpoint, err := q.LockService(ctx, service)
+	endpoint, err := q.ObservePublisherEnrollmentService(ctx, service)
 	if err != nil {
 		return result, err
 	}
@@ -145,7 +145,8 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 		placements, eligible, err := selectRelayServicePlacements(ctx, tx, clock.current(), run.PreferredRegions...)
 		if err != nil {
 			if serviceRunCapacityOnly(err) {
-				// reclaim only against the locked set that actually ran out.
+				// reclaim only against the observed set that ran out. cleanup
+				// independently locks and rechecks each expired assignment.
 				for _, relay := range eligible {
 					result.capacityRelays = append(result.capacityRelays, relay.relayServiceID)
 				}

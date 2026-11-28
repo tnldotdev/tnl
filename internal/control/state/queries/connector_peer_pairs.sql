@@ -3,13 +3,6 @@ SELECT * FROM control.connector_peer_pairs WHERE subject_kind=sqlc.arg(subject_k
     AND subject_id=sqlc.arg(subject_id) AND service_run_id=sqlc.arg(service_run_id)
     AND owner_key=sqlc.arg(owner_key) FOR UPDATE;
 
--- name: CountConnectorPeerPairOwners :one
-SELECT count(*) FROM (
-    SELECT id FROM control.connector_peer_pairs WHERE service_run_id=sqlc.arg(service_run_id)
-        AND (expires_at>sqlc.arg(now) OR replay_fence_until>sqlc.arg(now))
-    LIMIT sqlc.arg(owner_limit)
-) AS retained;
-
 -- name: ListConnectorPeerPairCandidates :many
 -- candidates convey no delivery authority. the publisher checks each delivery
 -- separately after the exact relay claims have been accepted.

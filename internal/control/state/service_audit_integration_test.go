@@ -341,6 +341,10 @@ func TestIntegrationServiceAuditCursorFollowsCommitOrder(t *testing.T) {
 	if err = RecordServiceAudit(ctx, first, e, "first"); err != nil {
 		t.Fatal(err)
 	}
+	// publication holds the cursor guard only after the operation has finished.
+	if _, err = first.Exec(ctx, "SET CONSTRAINTS ALL IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
 	workers := newIntegrationWorkers(t, cancel)
 	defer workers.stop()
 	result := make(chan error, 1)

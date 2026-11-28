@@ -124,13 +124,6 @@ func (d *Database) RedeemShare(ctx context.Context, auth ServiceHTTPRun, shareID
 	if err != nil {
 		return result, publisherLookupError(err, ErrShareNotFound)
 	}
-	count, err := q.CountActiveShareCookiesForService(ctx, controlstatedb.CountActiveShareCookiesForServiceParams{ServiceID: auth.Subject.ID, Now: timestamptz(now)})
-	if err != nil {
-		return result, err
-	}
-	if count >= 2048 {
-		return result, ErrShareLimit
-	}
 	if len(secret) == 32 {
 		digest := sha256.Sum256(secret)
 		if subtle.ConstantTimeCompare(digest[:], share.SecretDigest) != 1 {

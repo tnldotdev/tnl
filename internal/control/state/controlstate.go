@@ -24,7 +24,7 @@ import (
 
 const (
 	// serving roles require the latest embedded migration or a newer schema.
-	minimumSchemaVersion int64 = 5
+	minimumSchemaVersion int64 = 7
 	versionTable               = "control.goose_db_version"
 	bootstrapRetryDelay        = 25 * time.Millisecond
 )

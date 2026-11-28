@@ -79,6 +79,9 @@ func TestIntegrationRegisteredKeyWatchTracksAuthorityInputs(t *testing.T) {
 			}
 			q := controlstatedb.New(tx)
 			full(t, q, 0)
+			if err := q.FlushChangePublications(ctx); err != nil {
+				t.Fatal(err)
+			}
 			if read(t, q, service) == before || read(t, outside, service) != before {
 				t.Fatal("bookmark and permissions did not change in the same transaction")
 			}

@@ -50,45 +50,6 @@ func (q *Queries) ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHando
 	return i, err
 }
 
-const countActiveShareCookiesForService = `-- name: CountActiveShareCookiesForService :one
-SELECT count(*)::bigint FROM control.share_cookies cookie
-JOIN control.shares share ON share.id=cookie.share_id
-WHERE cookie.service_id=$1 AND cookie.expires_at>$2
-    AND share.revoked_at IS NULL AND share.expires_at>$2
-    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
-`
-
-type CountActiveShareCookiesForServiceParams struct {
-	ServiceID string
-	Now       pgtype.Timestamptz
-}
-
-func (q *Queries) CountActiveShareCookiesForService(ctx context.Context, arg CountActiveShareCookiesForServiceParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveShareCookiesForService, arg.ServiceID, arg.Now)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const countActiveSharesForService = `-- name: CountActiveSharesForService :one
-SELECT count(*)::bigint FROM control.shares share
-JOIN control.share_services included ON included.share_id=share.id
-WHERE included.service_id=$1 AND share.revoked_at IS NULL AND share.expires_at>$2
-    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,$2))
-`
-
-type CountActiveSharesForServiceParams struct {
-	ServiceID string
-	Now       pgtype.Timestamptz
-}
-
-func (q *Queries) CountActiveSharesForService(ctx context.Context, arg CountActiveSharesForServiceParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveSharesForService, arg.ServiceID, arg.Now)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const deleteExpiredShareCookies = `-- name: DeleteExpiredShareCookies :exec
 DELETE FROM control.share_cookies cookie WHERE cookie.token_digest IN
     (SELECT expired.token_digest FROM control.share_cookies expired WHERE expired.expires_at<=$1 LIMIT 100)

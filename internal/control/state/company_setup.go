@@ -72,7 +72,10 @@ func (d *Database) ActivateIdentityConnection(ctx context.Context, p ControlPrin
 	}
 	defer rollback(ctx, tx, "activate company connection", &retErr)()
 	q := controlstatedb.New(tx)
-	if err = q.LockIdentityBootstrap(ctx); err != nil {
+	if actor, ok := ctx.Value(companyActorKey{}).(companyActorProof); ok {
+		source = actor.identity
+	}
+	if err = q.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: source.Issuer, Subject: source.Subject}); err != nil {
 		return result, err
 	}
 	a, owner, err := lockCompanyOwner(ctx, tx, q, p, team, now)

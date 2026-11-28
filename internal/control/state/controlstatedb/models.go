@@ -662,6 +662,12 @@ type ControlOperatorNameserverHostname struct {
 	DelegationSetID string
 }
 
+type ControlPendingChangePublication struct {
+	TransactionID pgtype.Uint64
+	Kind          string
+	Scope         []string
+}
+
 type ControlPreview struct {
 	ID                  string
 	SchemaVersion       int16

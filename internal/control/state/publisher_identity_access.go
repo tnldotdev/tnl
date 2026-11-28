@@ -138,25 +138,11 @@ func (d *Database) ExchangePublisherAssertion(ctx context.Context, id, grant, au
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
-	if err := q.PrunePublisherAssertions(ctx, controlstatedb.PrunePublisherAssertionsParams{PublisherIdentityID: id, Now: timestamptz(now)}); err != nil {
-		return result, err
-	}
 	claimed, err := q.ClaimPublisherAssertion(ctx, controlstatedb.ClaimPublisherAssertionParams{PublisherIdentityID: id, AssertionID: a.ID, ExpiresAt: timestamptz(a.Until)})
 	if err != nil {
 		return result, err
 	}
 	if claimed != 1 {
-		return result, ErrPublisherIdentity
-	}
-	if err := q.PrunePublisherAccess(ctx, controlstatedb.PrunePublisherAccessParams{PublisherIdentityID: id, Now: timestamptz(now)}); err != nil {
-		return result, err
-	}
-	// the identity lock also bounds active tokens, including rotation assertions.
-	var count int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM control.publisher_access_tokens WHERE publisher_identity_id=$1`, id).Scan(&count); err != nil {
-		return result, err
-	}
-	if count >= 256 {
 		return result, ErrPublisherIdentity
 	}
 	var secret [32]byte
@@ -232,6 +218,7 @@ func (d *Database) authenticatePublisherAccess(ctx context.Context, q *controlst
 }
 
 func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, replacementID, audience string, public ed25519.PublicKey, proof, currentProof string, now time.Time) (retErr error) {
+	clock := newAuthorizationClock(now)
 	identity, err := d.AuthenticatePublisherAccess(ctx, token, sourceIP, now)
 	if err != nil {
 		return err
@@ -270,9 +257,6 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if err != nil {
 		return ErrPublisherIdentity
 	}
-	if err := q.PrunePublisherAssertions(ctx, controlstatedb.PrunePublisherAssertionsParams{PublisherIdentityID: identity.ID, Now: timestamptz(now)}); err != nil {
-		return err
-	}
 	n, err := q.ClaimPublisherAssertion(ctx, controlstatedb.ClaimPublisherAssertionParams{PublisherIdentityID: identity.ID, AssertionID: a.ID, ExpiresAt: timestamptz(a.Until)})
 	if err != nil {
 		return err
@@ -292,6 +276,12 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	}
 	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: replacementID, PublisherIdentityID: identity.ID, PublicKey: public, Revision: k.Revision + 1, CreatedAt: timestamptz(now)}); err != nil {
 		return err
+	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return err
+	}
+	if !a.Until.After(clock.current()) || !current.Until.After(clock.current()) {
+		return ErrPublisherIdentity
 	}
 	return tx.Commit(ctx)
 }

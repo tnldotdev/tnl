@@ -129,7 +129,7 @@ func TestIntegrationVisitorSigningKeyRotationRetainsLongCredentialsAndRevokesEme
 		t.Fatal(err)
 	}
 	var retained time.Time
-	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NOT NULL`).Scan(&retained); err != nil || !retained.Equal(permission.ExpiresAt) {
+	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE retired_at IS NOT NULL`).Scan(&retained); err != nil || retained.Before(permission.ExpiresAt) || retained.After(permission.ExpiresAt.Add(time.Hour)) {
 		t.Fatal("key retention did not follow issued credential lifetime", err)
 	}
 	if err := d.RotateVisitorSigningKey(t.Context(), testVisitorIssuer, true, now.Add(2*time.Minute)); err != nil {

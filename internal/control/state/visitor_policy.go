@@ -44,7 +44,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 	if err != nil {
 		return result, err
 	}
-	if len(keys) == 0 || len(keys) > maximumVisitorVerificationKeys {
+	if len(keys) == 0 {
 		return result, ErrVisitorPolicy
 	}
 	policy := controlv1.VisitorPolicySnapshot{Resource: controlv1.VisitorResourceScope{Kind: controlv1.VisitorResourceScopeKind(scope.Kind), Id: scope.ID}, Issuer: issuer,
@@ -133,7 +133,7 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		// omitting it would revoke live streams when the publisher applies policy.
 		rows, err := tx.Query(ctx, `SELECT session.id,session.public_key,LEAST(session.lease_expires_at,session.expires_at,session.identity_expires_at,$3::timestamptz)
 		    FROM control.workload_sessions session JOIN control.workload_session_services selected ON selected.workload_session_id=session.id
-		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.created_at<=$2 AND session.lease_expires_at>$2 AND session.identity_expires_at>$2 AND (session.expires_at IS NULL OR session.expires_at>$2) ORDER BY session.id LIMIT 4097`, scope.ID, now, now.Add(WorkloadLease))
+		    WHERE selected.service_id=$1 AND session.revoked_at IS NULL AND session.created_at<=$2 AND session.lease_expires_at>$2 AND session.identity_expires_at>$2 AND (session.expires_at IS NULL OR session.expires_at>$2) ORDER BY session.id`, scope.ID, now, now.Add(WorkloadLease))
 		if err != nil {
 			return result, err
 		}
@@ -156,9 +156,6 @@ func (d *Database) readVisitorPolicy(ctx context.Context, tx pgx.Tx, scope visit
 		rows.Close()
 		if err != nil {
 			return result, err
-		}
-		if len(policy.WorkloadLeases) > 4096 {
-			return result, ErrVisitorPolicy
 		}
 		policy.RegisteredKeyLeases, err = readVisitorPolicyRegisteredKeys(ctx, q, scope.ID, now)
 		if err != nil {
@@ -203,9 +200,6 @@ func readVisitorPolicyRegisteredKeys(ctx context.Context, q *controlstatedb.Quer
 	})
 	if err != nil {
 		return nil, err
-	}
-	if len(keys) > 4096 {
-		return nil, ErrVisitorPolicy
 	}
 	leases = make([]controlv1.VisitorRegisteredKeyLease, 0, len(keys))
 	for _, key := range keys {

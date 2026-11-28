@@ -114,9 +114,6 @@ func (d *Database) CreateGuestTrial(ctx context.Context, guest NewGuestTrial, ma
 	}
 	defer rollback(ctx, tx, "create guest trial", &retErr)()
 	queries := controlstatedb.New(tx)
-	if err := queries.LockIdentityBootstrap(ctx); err != nil {
-		return result, err
-	}
 	domain, err := ensureManagedDomain(ctx, queries, managedDomain, now)
 	if err != nil {
 		return result, err

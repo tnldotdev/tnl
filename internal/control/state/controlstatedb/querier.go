@@ -45,7 +45,13 @@ type Querier interface {
 	ClaimRelayServiceForCertificateOrder(ctx context.Context, arg ClaimRelayServiceForCertificateOrderParams) (ControlRelayService, error)
 	ClaimServiceConnectionSlot(ctx context.Context, arg ClaimServiceConnectionSlotParams) (ControlServiceConnectionSlot, error)
 	ClaimServiceEndpointDNSWork(ctx context.Context, arg ClaimServiceEndpointDNSWorkParams) (ControlServiceEndpoint, error)
+	CleanupCompanyLoginIntents(ctx context.Context, arg CleanupCompanyLoginIntentsParams) (int64, error)
 	CleanupExpiredConnectorPeerPairs(ctx context.Context, arg CleanupExpiredConnectorPeerPairsParams) (int64, error)
+	CleanupOIDCAssertions(ctx context.Context, arg CleanupOIDCAssertionsParams) (int64, error)
+	CleanupPublisherAccess(ctx context.Context, arg CleanupPublisherAccessParams) (int64, error)
+	// replay records remain until their assertions cannot be accepted. workers use
+	// short independent transactions and skip claims another transaction still owns.
+	CleanupPublisherAssertions(ctx context.Context, arg CleanupPublisherAssertionsParams) (int64, error)
 	CleanupServiceAuditEvents(ctx context.Context, arg CleanupServiceAuditEventsParams) (int64, error)
 	// lock the lease before key rows, as registration does. skip a relay being
 	// registered: deleting its old binding before its key check would allow a
@@ -80,9 +86,6 @@ type Querier interface {
 	ConsumeServiceHTTPBrowserLogin(ctx context.Context, arg ConsumeServiceHTTPBrowserLoginParams) (ControlServiceHttpBrowserLogin, error)
 	ConsumeShareHandoff(ctx context.Context, arg ConsumeShareHandoffParams) (ConsumeShareHandoffRow, error)
 	CopyCompanySessionContexts(ctx context.Context, arg CopyCompanySessionContextsParams) error
-	CountActiveShareCookiesForService(ctx context.Context, arg CountActiveShareCookiesForServiceParams) (int64, error)
-	CountActiveSharesForService(ctx context.Context, arg CountActiveSharesForServiceParams) (int64, error)
-	CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error)
 	CountGuestCurrentServices(ctx context.Context, guestID pgtype.Text) (int64, error)
 	// diagnostic/test oracle only; joins the parent to check slot eligibility.
 	CountOpenServiceRunAssignmentsByRelayService(ctx context.Context) ([]CountOpenServiceRunAssignmentsByRelayServiceRow, error)
@@ -114,7 +117,6 @@ type Querier interface {
 	DeleteConnectorPeerPairLegClaims(ctx context.Context, pairID string) (int64, error)
 	DeleteConnectorPeerPendingBinding(ctx context.Context, pairID string) (int64, error)
 	DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Timestamptz) error
-	DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredShareCookies(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteExpiredVisitorTokenSigningKeys(ctx context.Context, now pgtype.Timestamptz) error
 	DeleteFinishedShareHandoffs(ctx context.Context, now pgtype.Timestamptz) error
@@ -151,6 +153,8 @@ type Querier interface {
 	FindShareRequest(ctx context.Context, arg FindShareRequestParams) (ControlShare, error)
 	FinishGuestServiceRun(ctx context.Context, arg FinishGuestServiceRunParams) (int64, error)
 	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
+	// finish shared projection waits before the caller's final authorization check.
+	FlushChangePublications(ctx context.Context) error
 	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)
 	// terminal allocation keys/digests remain; targets and declarations do not.
 	ForgetExpiredGuestServiceConfigurations(ctx context.Context, arg ForgetExpiredGuestServiceConfigurationsParams) (int64, error)
@@ -258,8 +262,8 @@ type Querier interface {
 	InsertPublisherKey(ctx context.Context, arg InsertPublisherKeyParams) error
 	InsertRelayCertificateOrder(ctx context.Context, arg InsertRelayCertificateOrderParams) (ControlRelayCertificateOrder, error)
 	InsertService(ctx context.Context, arg InsertServiceParams) (ControlService, error)
-	// earlier owners are already locked in order. take the final owner's clock
-	// before allocating a cursor; the arrays have one element per event.
+	// callers order owners before insertion. the deferred trigger publishes each
+	// cursor at commit, so slow operations do not hold other services' audit clocks.
 	InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error)
 	InsertServiceCertificateOrder(ctx context.Context, arg InsertServiceCertificateOrderParams) (ControlAcmeOrder, error)
 	InsertServiceCertificateRequest(ctx context.Context, arg InsertServiceCertificateRequestParams) error
@@ -372,10 +376,8 @@ type Querier interface {
 	LockDeviceLoginByCode(ctx context.Context, userCode string) (ControlDeviceLogin, error)
 	LockDeviceLoginByCredential(ctx context.Context, credentialDigest []byte) (ControlDeviceLogin, error)
 	LockDeviceLoginByState(ctx context.Context, stateDigest []byte) (ControlDeviceLogin, error)
-	LockDeviceLoginCapacity(ctx context.Context) error
 	LockEligibleRelayLeases(ctx context.Context, arg LockEligibleRelayLeasesParams) ([]LockEligibleRelayLeasesRow, error)
 	LockGuestTrialByID(ctx context.Context, id string) (ControlGuestTrial, error)
-	LockIdentityBootstrap(ctx context.Context) error
 	LockIdentityConnection(ctx context.Context, arg LockIdentityConnectionParams) (ControlIdentityConnection, error)
 	LockIdentityForTeamCreation(ctx context.Context, identityID string) (LockIdentityForTeamCreationRow, error)
 	LockIngressLease(ctx context.Context, arg LockIngressLeaseParams) (ControlIngressLease, error)
@@ -396,6 +398,9 @@ type Querier interface {
 	LockLocalTeamForSession(ctx context.Context, teamID string) (string, error)
 	LockMaintenanceControl(ctx context.Context, operation string) (bool, error)
 	LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error)
+	// identity provisioning and signed actions coordinate only the exact issuer
+	// subject, including its first insertion when there is no row to lock yet.
+	LockOIDCIdentity(ctx context.Context, arg LockOIDCIdentityParams) error
 	LockPendingServiceInvitation(ctx context.Context, arg LockPendingServiceInvitationParams) (ControlServiceInvitation, error)
 	LockPreviewForTeamAccess(ctx context.Context, id string) (LockPreviewForTeamAccessRow, error)
 	LockPublisherEnrollment(ctx context.Context, id string) (ControlPublisherEnrollment, error)
@@ -423,6 +428,7 @@ type Querier interface {
 	LockVisitorTokenIssuer(ctx context.Context) (string, error)
 	LockVisitorTokenSigningAuthority(ctx context.Context) (ControlVisitorTokenKey, error)
 	LockVisitorTokenSigningKey(ctx context.Context) (ControlVisitorTokenKey, error)
+	LockVisitorVerificationAuthority(ctx context.Context) error
 	LockWorkloadSession(ctx context.Context, id string) (ControlWorkloadSession, error)
 	LoginTeamRequiresCompany(ctx context.Context, id string) (bool, error)
 	MarkACMEOrderInstalled(ctx context.Context, arg MarkACMEOrderInstalledParams) (ControlAcmeOrder, error)
@@ -435,12 +441,16 @@ type Querier interface {
 	MarkSupersededRelayRunSigningKeys(ctx context.Context, arg MarkSupersededRelayRunSigningKeysParams) error
 	ObserveAppliedProject(ctx context.Context, arg ObserveAppliedProjectParams) (ControlAppliedProject, error)
 	ObserveDeployment(ctx context.Context, arg ObserveDeploymentParams) (ControlDeployment, error)
-	ObserveIdentityBootstrap(ctx context.Context) error
+	ObserveDeploymentByID(ctx context.Context, id string) (ControlDeployment, error)
+	ObserveOIDCIdentity(ctx context.Context, arg ObserveOIDCIdentityParams) error
 	// redemption checks the approved service but only writes the enrollment and
 	// the new publisher. serialize with service edits, not sibling observations.
 	ObservePublisherEnrollmentService(ctx context.Context, id string) (ControlService, error)
 	ObserveServiceRecoveryEpisode(ctx context.Context, arg ObserveServiceRecoveryEpisodeParams) (ControlServiceRecoveryEpisode, error)
 	ObserveServiceRun(ctx context.Context, arg ObserveServiceRunParams) (ControlServiceRun, error)
+	// no shared lock during initial key creation: concurrent creators must not
+	// upgrade a shared issuer lock. old rotations also take this issuer first.
+	ObserveVisitorTokenIssuer(ctx context.Context) (string, error)
 	OpenServiceRecoveryEpisode(ctx context.Context, arg OpenServiceRecoveryEpisodeParams) error
 	OtherPreviewForTeamAccess(ctx context.Context, arg OtherPreviewForTeamAccessParams) (string, error)
 	OtherTeamAccessForService(ctx context.Context, arg OtherTeamAccessForServiceParams) (string, error)
@@ -452,8 +462,6 @@ type Querier interface {
 	// retained provenance only for this exact service, hostname and domain.
 	PrepareServiceRun(ctx context.Context, arg PrepareServiceRunParams) (ControlServiceRun, error)
 	PreviewInvitation(ctx context.Context, arg PreviewInvitationParams) (PreviewInvitationRow, error)
-	PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error
-	PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error
 	PublisherRuntimeActive(ctx context.Context, arg PublisherRuntimeActiveParams) (bool, error)
 	// this read does not lock resources after identities. service run
 	// transactions lock their saved service first and recheck the grant.

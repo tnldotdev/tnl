@@ -158,7 +158,7 @@ JOIN control.deployment_management_grants approval ON approval.grant_id=selected
 JOIN control.publisher_grants grant_record ON grant_record.id=approval.grant_id
 JOIN control.publisher_identity_keys signing ON signing.publisher_identity_id=grant_record.publisher_identity_id AND signing.retired_at IS NULL
 JOIN LATERAL control.deployment_connect_authority(approval.grant_id,signing.id,$1,$2::timestamptz) current ON true
-WHERE binding.service_id=$1 ORDER BY approval.grant_id,signing.id LIMIT 4097
+WHERE binding.service_id=$1 ORDER BY approval.grant_id,signing.id
 `
 
 type ReadVisitorPolicyRegisteredKeysParams struct {

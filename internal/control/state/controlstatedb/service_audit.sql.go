@@ -32,16 +32,12 @@ func (q *Queries) CleanupServiceAuditEvents(ctx context.Context, arg CleanupServ
 }
 
 const insertServiceAuditEvents = `-- name: InsertServiceAuditEvents :many
-WITH clock AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' ||
-        COALESCE($16::text,'guest/'||$17::text),0))
-)
 INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
     actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_digest,outcome,reason,configuration_revision)
 SELECT e.id,NULLIF(e.team,''),s.guest_id,s.id,e.kind,e.happened,$1,
     NULLIF(e.actor,''),NULLIF(e.device,''),NULLIF(e.publisher,''),NULLIF(e.run,''),NULLIF(e.visitor,''),
     NULLIF(e.source,''),NULLIF(e.outcome,''),NULLIF(e.reason,''),NULLIF(e.revision,0)
-FROM clock CROSS JOIN control.services s CROSS JOIN (
+FROM control.services s CROSS JOIN (
     SELECT unnest($2::text[]) AS id,unnest($3::text[]) AS team,
         unnest($4::text[]) AS service,unnest($5::text[]) AS kind,
         unnest($6::timestamptz[]) AS happened,unnest($7::text[]) AS actor,
@@ -73,12 +69,10 @@ type InsertServiceAuditEventsParams struct {
 	Outcomes   []string
 	Reasons    []string
 	Revisions  []int64
-	TeamID     pgtype.Text
-	GuestID    pgtype.Text
 }
 
-// earlier owners are already locked in order. take the final owner's clock
-// before allocating a cursor; the arrays have one element per event.
+// callers order owners before insertion. the deferred trigger publishes each
+// cursor at commit, so slow operations do not hold other services' audit clocks.
 func (q *Queries) InsertServiceAuditEvents(ctx context.Context, arg InsertServiceAuditEventsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, insertServiceAuditEvents,
 		arg.ReceivedAt,
@@ -96,8 +90,6 @@ func (q *Queries) InsertServiceAuditEvents(ctx context.Context, arg InsertServic
 		arg.Outcomes,
 		arg.Reasons,
 		arg.Revisions,
-		arg.TeamID,
-		arg.GuestID,
 	)
 	if err != nil {
 		return nil, err

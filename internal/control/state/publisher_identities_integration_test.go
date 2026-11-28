@@ -393,7 +393,7 @@ func TestIntegrationPublisherRunRetryAndHeartbeatRevocation(t *testing.T) {
 	}
 }
 
-func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
+func TestIntegrationPublisherReplayRetentionDoesNotLimitIssuance(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "publisher_replay_bound")
 	actor := seedControlServiceAuthority(t, d, now, "replaybound")
 	service, err := d.CreateServiceAt(t.Context(), actor.TeamID, actor.ActingIdentityID, "replay", "replay", ServicePlacement{}, now, ServiceMetadata{Protocol: "tcp"}, nil)
@@ -406,18 +406,41 @@ func TestIntegrationPublisherReplayRecordsAreBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = publisherAccess(t, d, p, private, "", now)
-	if _, err := d.pool.Exec(t.Context(), `INSERT INTO control.publisher_assertions(publisher_identity_id, assertion_id, expires_at) SELECT $1, lpad(i::text, 24, '0'), $2 FROM generate_series(1,255) i`, p.ID, now.Add(time.Minute)); err != nil {
-		t.Fatal(err)
+	for range 260 {
+		_ = publisherAccess(t, d, p, private, "", now)
 	}
 	assertion, _ := publisherproof.Sign(p.ID, p.KeyID, p.GrantID, publisherTestAudience, private, now)
+	if _, err := d.ExchangePublisherAssertion(t.Context(), p.ID, p.GrantID, publisherTestAudience, assertion, "", now); err != nil {
+		t.Fatalf("issuance above former proof and token ceilings: %v", err)
+	}
 	if _, err := d.ExchangePublisherAssertion(t.Context(), p.ID, p.GrantID, publisherTestAudience, assertion, "", now); !errors.Is(err, ErrPublisherIdentity) {
-		t.Fatalf("full replay budget = %v", err)
+		t.Fatalf("accepted duplicate proof: %v", err)
+	}
+	if count, err := d.CleanupAuthentication(t.Context(), now, 100); err != nil || count != 0 {
+		t.Fatalf("cleanup removed live credentials: %d, %v", count, err)
 	}
 	_ = publisherAccess(t, d, p, private, "", now.Add(61*time.Second))
 	var count int
+	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_assertions WHERE publisher_identity_id=$1`, p.ID).Scan(&count); err != nil || count != 262 {
+		t.Fatalf("authentication pruned replay state: %d, %v", count, err)
+	}
+	if removed, err := d.CleanupAuthentication(t.Context(), now.Add(61*time.Second), 100); err != nil || removed != 100 {
+		t.Fatalf("cleanup did not respect its batch: %d, %v", removed, err)
+	}
+	for {
+		removed, err := d.CleanupAuthentication(t.Context(), now.Add(61*time.Second), 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if removed == 0 {
+			break
+		}
+	}
 	if err := d.pool.QueryRow(t.Context(), `SELECT count(*) FROM control.publisher_assertions WHERE publisher_identity_id=$1`, p.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("expired replay records = %d, %v", count, err)
+	}
+	if _, err := d.ExchangePublisherAssertion(t.Context(), p.ID, p.GrantID, publisherTestAudience, assertion, "", now.Add(61*time.Second)); !errors.Is(err, ErrPublisherIdentity) {
+		t.Fatalf("cleanup allowed an expired proof: %v", err)
 	}
 }
 

@@ -120,8 +120,32 @@ func (q *Queries) LockVisitorTokenSigningKey(ctx context.Context) (ControlVisito
 	return i, err
 }
 
+const lockVisitorVerificationAuthority = `-- name: LockVisitorVerificationAuthority :exec
+SELECT id FROM control.visitor_verification_key_revision WHERE id=1 FOR UPDATE
+`
+
+func (q *Queries) LockVisitorVerificationAuthority(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockVisitorVerificationAuthority)
+	return err
+}
+
+const observeVisitorTokenIssuer = `-- name: ObserveVisitorTokenIssuer :one
+SELECT issuer FROM control.visitor_token_issuer WHERE id
+    AND EXISTS(SELECT 1 FROM control.visitor_token_keys WHERE retired_at IS NULL AND revoked_at IS NULL)
+FOR SHARE
+`
+
+// no shared lock during initial key creation: concurrent creators must not
+// upgrade a shared issuer lock. old rotations also take this issuer first.
+func (q *Queries) ObserveVisitorTokenIssuer(ctx context.Context) (string, error) {
+	row := q.db.QueryRow(ctx, observeVisitorTokenIssuer)
+	var issuer string
+	err := row.Scan(&issuer)
+	return issuer, err
+}
+
 const retainVisitorTokenSigningKey = `-- name: RetainVisitorTokenSigningKey :execrows
-UPDATE control.visitor_token_keys SET retain_until=$1
+UPDATE control.visitor_token_keys SET retain_until=GREATEST(retain_until,$1)
 WHERE id=$2 AND retired_at IS NULL AND revoked_at IS NULL AND retain_until<$1
 `
 
@@ -161,7 +185,7 @@ func (q *Queries) RevokeVisitorTokenSigningKeys(ctx context.Context, now pgtype.
 const visitorTokenVerificationKeys = `-- name: VisitorTokenVerificationKeys :many
 SELECT id,public_key FROM control.visitor_token_keys
 WHERE revoked_at IS NULL AND (retired_at IS NULL OR retain_until>$1)
-ORDER BY created_at,id LIMIT 65
+ORDER BY created_at,id
 `
 
 type VisitorTokenVerificationKeysRow struct {

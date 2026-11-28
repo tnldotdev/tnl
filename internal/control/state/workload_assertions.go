@@ -68,7 +68,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if !bytes.Equal(row.CredentialDigest, digest[:]) {
 		return result, ErrWorkloadDenied
 	}
-	if _, err := controlstatedb.New(tx).LockLocalTeamForMutation(ctx, row.TeamID); err != nil {
+	if _, err := controlstatedb.New(tx).LockLocalTeamForSession(ctx, row.TeamID); err != nil {
 		return result, err
 	}
 	// storage rotation can hold the session row without the team gate. take
@@ -84,7 +84,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if previous.IdentityDigest() != c.IdentityDigest() || !ed25519.Verify(row.PublicKey, workloadproof.Attach(id, c.AssertionDigest), signature) {
 		return result, ErrWorkloadDenied
 	}
-	project, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
+	project, err := controlstatedb.New(tx).ObserveAppliedProject(ctx, controlstatedb.ObserveAppliedProjectParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
 	}
@@ -115,6 +115,16 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if _, err = tx.Exec(ctx, `UPDATE control.workload_sessions SET identity_expires_at=GREATEST(identity_expires_at,$2),
 	    lease_expires_at=GREATEST(lease_expires_at,LEAST(renewed_at+interval '90 seconds',expires_at,GREATEST(identity_expires_at,$2))) WHERE id=$1`, id, time.Unix(c.ExpiresAt, 0)); err != nil {
 		return result, err
+	}
+	if err := controlstatedb.New(tx).FlushChangePublications(ctx); err != nil {
+		return result, err
+	}
+	current = clock.current()
+	if !row.LeaseExpiresAt.Time.After(current) || row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(current) || !row.IdentityExpiresAt.Time.After(current) {
+		return result, ErrWorkloadExpired
+	}
+	if c.Validate(current) != nil {
+		return result, ErrWorkloadDenied
 	}
 	result, err = d.workloadSession(ctx, tx, id, clock.current())
 	if err != nil {

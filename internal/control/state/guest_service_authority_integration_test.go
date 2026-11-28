@@ -216,7 +216,7 @@ func TestIntegrationGuestServiceAllocationSerializesRecoveryAndOneCurrentService
 	}
 }
 
-func TestIntegrationGuestTrialReturnsSavedLifetimeAfterBootstrapWait(t *testing.T) {
+func TestIntegrationGuestTrialReturnsSavedLifetimeAfterIssuanceWait(t *testing.T) {
 	d, now := newControlStateIntegrationDatabase(t, "guest_bootstrap_wait")
 	enableGuestTestIngress(t, d)
 	guest, err := NewGuestTrialCredential(netip.MustParseAddr("192.0.2.7"))
@@ -231,7 +231,11 @@ func TestIntegrationGuestTrialReturnsSavedLifetimeAfterBootstrapWait(t *testing.
 	}
 	defer rollbackTestTransaction(t, gate)
 	defer workers.stop()
-	if err := controlstatedb.New(gate).LockIdentityBootstrap(ctx); err != nil {
+	digest, err := d.guestIPDigest(d.storageKey.CurrentID(), "issuance", guest.SourceIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "tnl:guest-issuance:"+digest); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)

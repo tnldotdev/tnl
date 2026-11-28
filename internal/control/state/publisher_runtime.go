@@ -60,6 +60,7 @@ type PublisherRuntimeStatus struct {
 // PublisherRuntime is the sole observation writer. enrollment, key verification,
 // token exchange and preflight deployment leases never call it.
 func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeRequest) (result PublisherRuntimeResponse, retErr error) {
+	clock := newAuthorizationClock(r.Now)
 	started := time.Now()
 	operation := observability.OpPublisherRuntimeInvalid
 	switch r.Action {
@@ -110,7 +111,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if err = tx.QueryRow(ctx, `SELECT team_id FROM control.publisher_identities WHERE id=$1`, r.PublisherIdentityID).Scan(&team); err != nil {
 		return result, publisherLookupError(err, ErrPublisherIdentity)
 	}
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+	if _, err = q.LockLocalTeamForSession(ctx, team); err != nil {
 		return result, publisherLookupError(err, ErrPublisherIdentity)
 	}
 	i, err := q.LockPublisherIdentity(ctx, r.PublisherIdentityID)
@@ -121,7 +122,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		return result, ErrPublisherIdentity
 	}
 	var deployment, deploymentKey string
-	err = tx.QueryRow(ctx, `SELECT m.deployment_id,m.key_id FROM control.deployment_publisher_members m JOIN control.deployments g ON g.id=m.deployment_id WHERE m.publisher_identity_id=$1 AND g.deleted_at IS NULL AND g.team_id=$2 AND control.active_publisher(m.publisher_identity_id,$3)`, i.ID, team, r.Now).Scan(&deployment, &deploymentKey)
+	err = tx.QueryRow(ctx, `SELECT m.deployment_id,m.key_id FROM control.deployment_publisher_members m JOIN control.deployments g ON g.id=m.deployment_id WHERE m.publisher_identity_id=$1 AND g.deleted_at IS NULL AND g.team_id=$2 AND control.active_publisher(m.publisher_identity_id,$3)`, i.ID, team, clock.current()).Scan(&deployment, &deploymentKey)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
@@ -133,7 +134,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		if r.Deployment != nil {
 			return result, ErrPublisherIdentity
 		}
-		if _, _, err = d.livePublisher(ctx, q, i.ID, r.ScopeID, "", r.Now); err != nil {
+		if _, _, err = d.livePublisher(ctx, q, i.ID, r.ScopeID, "", clock.current()); err != nil {
 			return result, err
 		}
 	}
@@ -148,7 +149,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 	if k.RetiredAt.Valid || deployment != "" && deploymentKey != kid {
 		return result, ErrPublisherIdentity
 	}
-	a, err := publisherproof.Verify(r.Assertion, i.ID, kid, publisherproof.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, r.Now)
+	a, err := publisherproof.Verify(r.Assertion, i.ID, kid, publisherproof.RuntimeScope(r.ScopeID, r.Action, r.ProcessRunID, r.ExpectedEpoch, publisherprovenance.Digest(r.Deployment)), r.Audience, k.PublicKey, clock.current())
 	if err != nil {
 		return result, ErrPublisherIdentity
 	}
@@ -157,14 +158,11 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		identity.ReportedDeploymentID, identity.ReplicaKey = r.Deployment.DeploymentId, r.Deployment.ReplicaKey
 	}
 	ctx = observability.AuthenticatedServerScope(ctx, identity, observability.Fields{Component: "control"})
-	if err = q.PrunePublisherAssertions(ctx, controlstatedb.PrunePublisherAssertionsParams{PublisherIdentityID: i.ID, Now: timestamptz(r.Now)}); err != nil {
-		return result, err
-	}
 	claimed, err := q.ClaimPublisherAssertion(ctx, controlstatedb.ClaimPublisherAssertionParams{PublisherIdentityID: i.ID, AssertionID: a.ID, ExpiresAt: timestamptz(a.Until)})
 	if err != nil {
 		return result, err
 	}
-	if claimed != 1 {
+	if claimed != 1 || !a.Until.After(clock.current()) {
 		return result, ErrPublisherIdentity
 	}
 	current, err := q.GetPublisherRuntime(ctx, i.ID)
@@ -215,7 +213,7 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			}
 			current, err = q.StartPublisherRuntime(ctx, controlstatedb.StartPublisherRuntimeParams{PublisherIdentityID: i.ID, TeamID: team, KeyID: kid, ScopeID: r.ScopeID, ProcessRunID: r.ProcessRunID, Epoch: r.ExpectedEpoch + 1, AddressFamily: family, Now: timestamptz(r.Now), LeaseExpiresAt: timestamptz(until), DeploymentReport: deploymentJSON, DeploymentID: deploymentDeployment, DeploymentFirstObservedAt: deploymentFirst})
 			if err == nil && deployment != "" {
-				// the team lock serializes start with acknowledgement. invalidate
+				// the identity lock serializes start with acknowledgement. invalidate
 				// only a new epoch, never recovery of a lost start reply; request
 				// timestamps cannot establish which runtime acknowledged health.
 				err = q.InvalidateDeploymentPublisherRuntimeHealth(ctx, i.ID)
@@ -252,6 +250,12 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 		if err != nil {
 			return result, err
 		}
+	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return PublisherRuntimeResponse{}, err
+	}
+	if !a.Until.After(clock.current()) {
+		return PublisherRuntimeResponse{}, ErrPublisherIdentity
 	}
 	return result, tx.Commit(ctx)
 }

@@ -17,7 +17,7 @@ import (
 )
 
 func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
-	for _, prior := range []int64{1, 2, 3, 4} {
+	for _, prior := range []int64{1, 2, 3, 4, 5, 6} {
 		t.Run(fmt.Sprintf("from-v%d", prior), func(t *testing.T) {
 			checkPopulatedDNSSchemaUpgrade(t, prior)
 		})
@@ -115,7 +115,8 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 		if err := pool.QueryRow(ctx, `SELECT jsonb_build_array(
 		    (SELECT to_jsonb(s) FROM control.services s WHERE id=$1),
 		    (SELECT jsonb_agg(to_jsonb(e)-'dns_consecutive_errors'-'wildcard_dns' ORDER BY hostname)
-		     FROM control.service_endpoints e WHERE service_id=$1))::text`, serviceID).Scan(&value); err != nil {
+		     FROM control.service_endpoints e WHERE service_id=$1),
+		    (SELECT jsonb_agg(to_jsonb(e) ORDER BY cursor) FROM control.service_audit_events e WHERE service_id=$1))::text`, serviceID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
@@ -132,6 +133,11 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	if priorVersion >= 4 {
 		// the v4 runtime inherited select alone on the change records.
 		if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf(`REVOKE INSERT,UPDATE,DELETE ON control.read_dependency_versions FROM %s`, pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if priorVersion >= 6 {
+		if _, err := sqlDB.ExecContext(ctx, `REVOKE ALL ON control.pending_change_publications FROM `+pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -197,6 +203,22 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	}
 	if _, err := runtime.Exec(ctx, `DELETE FROM control.read_dependency_versions WHERE false`); err == nil {
 		t.Fatal("reader can erase change records")
+	}
+	if _, err := runtime.Exec(ctx, `SELECT * FROM control.pending_change_publications`); err == nil {
+		t.Fatal("runtime can access the migration-owned publication queue")
+	}
+	if _, err := runtime.Exec(ctx, `SELECT control.append_service_audit('migration-audit-0123456789abcdef','team',$1,'apply',now())`, serviceID); err != nil {
+		t.Fatal("previous runtime cannot publish an audit event", err)
+	}
+	var auditCursor int64
+	if err := runtime.QueryRow(ctx, `SELECT cursor FROM control.service_audit_events WHERE id='migration-audit-0123456789abcdef'`).Scan(&auditCursor); err != nil || auditCursor < 1 {
+		t.Fatal("previous runtime cannot read its finalized audit event", auditCursor, err)
+	}
+	if _, err := runtime.Exec(ctx, `UPDATE control.publisher_identity_keys SET retired_at=$1 WHERE id='signing-key'`, now); err != nil {
+		t.Fatal("previous runtime cannot publish a registered-key change", err)
+	}
+	if _, err := runtime.Exec(ctx, `UPDATE control.publisher_identity_keys SET retired_at=NULL WHERE id='signing-key'`); err != nil {
+		t.Fatal(err)
 	}
 	reopened, err := Open(ctx, runtimeURL, testStorageKey, "", naming.ManagedURLModeGenerated)
 	if err != nil {

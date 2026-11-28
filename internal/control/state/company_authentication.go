@@ -81,7 +81,7 @@ func lockCompanyOwner(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries,
 	if proof.identity.IssuedAt.IsZero() || proof.identity.IssuedAt.After(now) || proof.identity.IssuedAt.Before(now.Add(-5*time.Minute)) || proof.identity.AssertionExpiry.After(proof.identity.IssuedAt.Add(5*time.Minute)) {
 		return controlstatedb.LockTeamActorContextRow{}, "", ErrControlAuthentication
 	}
-	if err := q.LockIdentityBootstrap(ctx); err != nil {
+	if err := q.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: proof.identity.Issuer, Subject: proof.identity.Subject}); err != nil {
 		return controlstatedb.LockTeamActorContextRow{}, "", err
 	}
 	if _, err := q.LockLocalTeamForMutation(ctx, team); err != nil {
@@ -135,11 +135,9 @@ func lockCompanyOwner(ctx context.Context, tx pgx.Tx, q *controlstatedb.Queries,
 }
 
 func consumeCompanyAssertion(ctx context.Context, q *controlstatedb.Queries, identity OIDCIdentity, now time.Time) error {
+	clock := newAuthorizationClock(now)
 	if !identity.AssertionExpiry.After(now) || identity.AssertionDigest == ([32]byte{}) {
 		return ErrControlAuthentication
-	}
-	if err := q.DeleteExpiredOIDCAssertionExchanges(ctx, timestamptz(now)); err != nil {
-		return err
 	}
 	n, err := q.ConsumeOIDCAssertion(ctx, controlstatedb.ConsumeOIDCAssertionParams{AssertionDigest: identity.AssertionDigest[:], ConsumedAt: timestamptz(now), ExpiresAt: timestamptz(identity.AssertionExpiry)})
 	if err != nil {
@@ -147,6 +145,9 @@ func consumeCompanyAssertion(ctx context.Context, q *controlstatedb.Queries, ide
 	}
 	if n != 1 {
 		return ErrOIDCAssertionReplay
+	}
+	if !identity.AssertionExpiry.After(clock.current()) {
+		return ErrControlAuthentication
 	}
 	return nil
 }
@@ -259,16 +260,6 @@ func (d *Database) CreateCompanyLoginIntent(ctx context.Context, team, issuer, c
 	}
 	digest := sha256.Sum256([]byte(binding))
 	until := now.Add(10 * time.Minute)
-	if _, err = tx.Exec(ctx, `DELETE FROM control.company_login_intents WHERE expires_at<=$1`, now); err != nil {
-		return result, err
-	}
-	var count int
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM control.company_login_intents`).Scan(&count); err != nil {
-		return result, err
-	}
-	if count >= 10000 {
-		return result, ErrAuthorityConflict
-	}
 	_, err = tx.Exec(ctx, `INSERT INTO control.company_login_intents(id,team_id,identity_connection_id,connection_revision,issuer,client_id,redirect_uri,nonce,binding_digest,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, team, c.ID, c.Revision, issuer, client, redirect, nonce, digest[:], now, until)
 	if err != nil {
 		return result, err

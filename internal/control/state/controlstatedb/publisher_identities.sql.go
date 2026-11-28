@@ -13,8 +13,7 @@ import (
 
 const claimPublisherAssertion = `-- name: ClaimPublisherAssertion :execrows
 INSERT INTO control.publisher_assertions(publisher_identity_id, assertion_id, expires_at)
-SELECT $1, $2, $3
-WHERE (SELECT count(*) FROM control.publisher_assertions WHERE publisher_identity_id = $1) < 256
+VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
 `
 
@@ -578,34 +577,6 @@ func (q *Queries) LockPublisherIdentity(ctx context.Context, id string) (Control
 		&i.RevokedAt,
 	)
 	return i, err
-}
-
-const prunePublisherAccess = `-- name: PrunePublisherAccess :exec
-DELETE FROM control.publisher_access_tokens WHERE publisher_identity_id = $1 AND expires_at <= $2
-`
-
-type PrunePublisherAccessParams struct {
-	PublisherIdentityID string
-	Now                 pgtype.Timestamptz
-}
-
-func (q *Queries) PrunePublisherAccess(ctx context.Context, arg PrunePublisherAccessParams) error {
-	_, err := q.db.Exec(ctx, prunePublisherAccess, arg.PublisherIdentityID, arg.Now)
-	return err
-}
-
-const prunePublisherAssertions = `-- name: PrunePublisherAssertions :exec
-DELETE FROM control.publisher_assertions WHERE publisher_identity_id = $1 AND expires_at <= $2
-`
-
-type PrunePublisherAssertionsParams struct {
-	PublisherIdentityID string
-	Now                 pgtype.Timestamptz
-}
-
-func (q *Queries) PrunePublisherAssertions(ctx context.Context, arg PrunePublisherAssertionsParams) error {
-	_, err := q.db.Exec(ctx, prunePublisherAssertions, arg.PublisherIdentityID, arg.Now)
-	return err
 }
 
 const publisherScopeAvailable = `-- name: PublisherScopeAvailable :one

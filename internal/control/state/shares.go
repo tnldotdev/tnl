@@ -198,15 +198,6 @@ func (d *Database) CreateShare(ctx context.Context, request CreateShareRequest, 
 	if !request.ExpiresAt.After(now) || request.ExpiresAt.After(now.Add(maximumShareLifetime)) {
 		return result, ErrShareInvalid
 	}
-	for _, id := range ids {
-		count, err := q.CountActiveSharesForService(ctx, controlstatedb.CountActiveSharesForServiceParams{ServiceID: id, Now: timestamptz(now)})
-		if err != nil {
-			return result, err
-		}
-		if count >= 256 {
-			return result, ErrShareLimit
-		}
-	}
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {
 		return result, err
@@ -415,13 +406,6 @@ func (d *Database) CreateGuestShare(ctx context.Context, credential GuestCredent
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
-	}
-	count, err := q.CountActiveSharesForService(ctx, controlstatedb.CountActiveSharesForServiceParams{ServiceID: serviceID, Now: timestamptz(clock.current())})
-	if err != nil {
-		return result, err
-	}
-	if count >= 256 {
-		return result, ErrShareLimit
 	}
 	id, err := opaqueid.New(opaqueid.SharePrefix)
 	if err != nil {

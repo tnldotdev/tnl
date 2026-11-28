@@ -758,6 +758,34 @@ func (q *Queries) ObserveDeployment(ctx context.Context, arg ObserveDeploymentPa
 	return i, err
 }
 
+const observeDeploymentByID = `-- name: ObserveDeploymentByID :one
+SELECT ownership, id, team_id, project_key, name, description, domain_id, namespace, revision, configuration_hash, configuration_ciphertext, storage_key_id, create_principal_id, create_idempotency_key, create_request_digest, deleted_at FROM control.deployments WHERE id=$1 AND deleted_at IS NULL FOR SHARE
+`
+
+func (q *Queries) ObserveDeploymentByID(ctx context.Context, id string) (ControlDeployment, error) {
+	row := q.db.QueryRow(ctx, observeDeploymentByID, id)
+	var i ControlDeployment
+	err := row.Scan(
+		&i.Ownership,
+		&i.ID,
+		&i.TeamID,
+		&i.ProjectKey,
+		&i.Name,
+		&i.Description,
+		&i.DomainID,
+		&i.Namespace,
+		&i.Revision,
+		&i.ConfigurationHash,
+		&i.ConfigurationCiphertext,
+		&i.StorageKeyID,
+		&i.CreatePrincipalID,
+		&i.CreateIdempotencyKey,
+		&i.CreateRequestDigest,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const removeProjectServiceDeclarations = `-- name: RemoveProjectServiceDeclarations :exec
 DELETE FROM control.project_services declaration
 WHERE declaration.team_id=$1 AND declaration.project_key=$2 AND NOT(declaration.name=ANY($3::text[]))

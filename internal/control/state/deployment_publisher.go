@@ -95,10 +95,17 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 		return result, ErrDeploymentPublisher
 	}
 	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, team); err != nil {
+	if _, err = q.LockLocalTeamForSession(ctx, team); err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	deployment, err := q.LockDeploymentByID(ctx, gid)
+	// only an explicitly configured project quota needs project-wide admission.
+	// enrollment rows coordinate their own max_members budget.
+	if d.projectPublisherLimits[team+"/"+project] > 0 {
+		if _, err = q.LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: team, ProjectKey: project}); err != nil {
+			return result, publisherLookupError(err, ErrDeploymentPublisher)
+		}
+	}
+	deployment, err := q.ObserveDeploymentByID(ctx, gid)
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
@@ -184,6 +191,9 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 	if err = recordDeploymentPublisherUpdate(ctx, tx, gid, "", id, "enroll-member/"+id, now); err != nil {
 		return result, err
 	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return DeploymentPublisherIdentity{}, err
+	}
 	if !until.After(clock.current()) {
 		return DeploymentPublisherIdentity{}, ErrDeploymentPublisher
 	}
@@ -213,6 +223,7 @@ func (d *Database) VerifyDeploymentIdentity(ctx context.Context, id, deployment,
 }
 
 func authorizeDeploymentPublisherAssertion(ctx context.Context, tx pgx.Tx, id, deployment, assertion, audience string, now time.Time) (result DeploymentPublisherIdentity, err error) {
+	clock := newAuthorizationClock(now)
 	kid, err := publisherproof.KeyID(assertion)
 	if err != nil {
 		return result, ErrDeploymentPublisher
@@ -221,7 +232,12 @@ func authorizeDeploymentPublisherAssertion(ctx context.Context, tx pgx.Tx, id, d
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
 	q := controlstatedb.New(tx)
-	if _, err = q.LockLocalTeamForMutation(ctx, result.TeamID); err != nil {
+	if _, err = q.LockLocalTeamForSession(ctx, result.TeamID); err != nil {
+		return result, publisherLookupError(err, ErrDeploymentPublisher)
+	}
+	// runtime start, lease replacement, and acknowledgement use this same
+	// identity row. publishers in one deployment can proceed independently.
+	if _, err = q.LockPublisherIdentity(ctx, id); err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
 	var public []byte
@@ -229,18 +245,15 @@ func authorizeDeploymentPublisherAssertion(ctx context.Context, tx pgx.Tx, id, d
 	if err != nil {
 		return result, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	a, err := publisherproof.Verify(assertion, id, kid, deployment, audience, public, now)
+	a, err := publisherproof.Verify(assertion, id, kid, deployment, audience, public, clock.current())
 	if err != nil {
 		return result, ErrDeploymentPublisher
-	}
-	if err = q.PrunePublisherAssertions(ctx, controlstatedb.PrunePublisherAssertionsParams{PublisherIdentityID: id, Now: timestamptz(now)}); err != nil {
-		return result, err
 	}
 	n, err := q.ClaimPublisherAssertion(ctx, controlstatedb.ClaimPublisherAssertionParams{PublisherIdentityID: id, AssertionID: a.ID, ExpiresAt: timestamptz(a.Until)})
 	if err != nil {
 		return result, err
 	}
-	if n != 1 {
+	if n != 1 || !a.Until.After(clock.current()) {
 		return result, ErrDeploymentPublisher
 	}
 	result.DeploymentID, result.PublisherIdentityID, result.KeyID = deployment, id, kid
@@ -281,7 +294,7 @@ func issueDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, id, key strin
 	return DeploymentPublisherLease{AccessToken: "dpl_lease_" + secret, ExpiresAt: until}, nil
 }
 
-func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, clock authorizationClock, teamGuard func(context.Context, string) (string, error)) (result DeploymentPublisherIdentity, until time.Time, err error) {
+func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, clock authorizationClock) (result DeploymentPublisherIdentity, until time.Time, err error) {
 	if !strings.HasPrefix(token, "dpl_lease_") {
 		return result, until, ErrDeploymentPublisher
 	}
@@ -290,10 +303,17 @@ func lockDeploymentPublisherLease(ctx context.Context, tx pgx.Tx, token string, 
 		return result, until, ErrDeploymentPublisher
 	}
 	// locate the team first, then recheck all live state after locking it.
-	if err = tx.QueryRow(ctx, `SELECT g.team_id FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id WHERE l.token_digest=$1`, digest).Scan(&result.TeamID); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT g.team_id,g.id,m.publisher_identity_id FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id WHERE l.token_digest=$1`, digest).Scan(&result.TeamID, &result.DeploymentID, &result.PublisherIdentityID); err != nil {
 		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
 	}
-	if _, err = teamGuard(ctx, result.TeamID); err != nil {
+	q := controlstatedb.New(tx)
+	if _, err = q.LockLocalTeamForSession(ctx, result.TeamID); err != nil {
+		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
+	}
+	if _, err = q.ObserveDeploymentByID(ctx, result.DeploymentID); err != nil {
+		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
+	}
+	if _, err = q.LockPublisherIdentity(ctx, result.PublisherIdentityID); err != nil {
 		return result, until, publisherLookupError(err, ErrDeploymentPublisher)
 	}
 	err = tx.QueryRow(ctx, `SELECT g.project_key,g.id,g.name,m.publisher_identity_id,m.key_id,l.expires_at FROM control.deployment_publisher_leases l JOIN control.deployment_publisher_members m ON m.publisher_identity_id=l.publisher_identity_id JOIN control.deployments g ON g.id=m.deployment_id JOIN control.publisher_identities p ON p.id=m.publisher_identity_id JOIN control.publisher_identity_keys k ON k.id=l.key_id AND k.publisher_identity_id=p.id WHERE l.token_digest=$1 AND l.expires_at>$2 AND g.deleted_at IS NULL AND p.revoked_at IS NULL AND k.retired_at IS NULL`, digest, clock.current()).Scan(&result.ProjectKey, &result.DeploymentID, &result.DeploymentName, &result.PublisherIdentityID, &result.KeyID, &until)
@@ -316,7 +336,7 @@ func (d *Database) deploymentPublisherAssignments(ctx context.Context, token str
 	}
 	defer rollback(ctx, tx, "get deployment assignments", &retErr)()
 	q := controlstatedb.New(tx)
-	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock, q.LockLocalTeamForSession)
+	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock)
 	if err != nil {
 		return result, err
 	}
@@ -401,11 +421,11 @@ func (d *Database) AcknowledgeDeploymentPublisherConfiguration(ctx context.Conte
 	}
 	defer rollback(ctx, tx, "acknowledge deployment configuration", &retErr)()
 	q := controlstatedb.New(tx)
-	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock, q.LockLocalTeamForMutation)
+	m, until, err := lockDeploymentPublisherLease(ctx, tx, token, clock)
 	if err != nil {
 		return err
 	}
-	row, err := q.LockDeploymentByID(ctx, m.DeploymentID)
+	row, err := q.ObserveDeploymentByID(ctx, m.DeploymentID)
 	if err != nil {
 		return err
 	}

@@ -340,6 +340,9 @@ func (d *Database) commitDeploymentAccess(ctx context.Context, tx pgx.Tx, a depl
 	if a.grantID == "" {
 		return commitDeployment(ctx, tx, a.scope)
 	}
+	if err := controlstatedb.New(tx).FlushChangePublications(ctx); err != nil {
+		return err
+	}
 	if a.mode == deploymentRead {
 		if err := observeDeploymentCredential(ctx, tx, a.principalID, a.grantID); err != nil {
 			return err

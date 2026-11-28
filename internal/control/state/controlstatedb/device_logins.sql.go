@@ -12,7 +12,11 @@ import (
 )
 
 const deleteExpiredDeviceLogins = `-- name: DeleteExpiredDeviceLogins :exec
-DELETE FROM control.device_logins WHERE expires_at <= $1
+WITH expired AS (
+    SELECT login.credential_digest FROM control.device_logins login WHERE login.expires_at <= $1
+    ORDER BY login.expires_at,login.credential_digest LIMIT 1000 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM control.device_logins WHERE credential_digest IN (SELECT credential_digest FROM expired)
 `
 
 func (q *Queries) DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Timestamptz) error {
@@ -22,8 +26,7 @@ func (q *Queries) DeleteExpiredDeviceLogins(ctx context.Context, now pgtype.Time
 
 const insertDeviceLogin = `-- name: InsertDeviceLogin :execrows
 INSERT INTO control.device_logins (credential_digest, user_code, expires_at, payload, storage_key_id)
-SELECT $1, $2, $3, $4, $5
-WHERE (SELECT count(*) FROM control.device_logins) < 4096
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertDeviceLoginParams struct {
@@ -100,15 +103,6 @@ func (q *Queries) LockDeviceLoginByState(ctx context.Context, stateDigest []byte
 		&i.StorageKeyID,
 	)
 	return i, err
-}
-
-const lockDeviceLoginCapacity = `-- name: LockDeviceLoginCapacity :exec
-SELECT pg_advisory_xact_lock(837174137711267954)
-`
-
-func (q *Queries) LockDeviceLoginCapacity(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, lockDeviceLoginCapacity)
-	return err
 }
 
 const updateDeviceLogin = `-- name: UpdateDeviceLogin :exec

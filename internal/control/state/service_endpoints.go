@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/tnldotdev/tnl/internal/config"
 	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/naming"
@@ -149,16 +150,39 @@ func allocateServicePort(ctx context.Context, tx pgx.Tx, service, pool string, p
 		if !public {
 			return 0, nil
 		}
-		// serialize allocation within one public address pool, then reserve under
-		// a unique constraint. local connectors select their own SQLite ports.
-		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed-ports/'||$1,0))`, pool); err != nil {
+		// inventory changes wait for allocations, while different allocations
+		// compete only on the unique port they actually choose.
+		if _, err = tx.Exec(ctx, `SELECT id FROM control.ingress_pools WHERE id=$1 FOR SHARE`, pool); err != nil {
 			return 0, err
 		}
-		err = tx.QueryRow(ctx, `INSERT INTO control.service_port_claims(service_id,ingress_pool_id,port,claimed_at)
-		    SELECT $1,$2,candidate,$3 FROM control.ingress_service_port_ranges inventory CROSS JOIN LATERAL generate_series(inventory.first_port,inventory.last_port) candidate
-		    WHERE inventory.ingress_pool_id=$2
-		    AND NOT EXISTS(SELECT 1 FROM control.service_port_claims held WHERE held.ingress_pool_id=$2 AND held.port=candidate AND held.state<>'released')
-		    ORDER BY md5($1||'/'||candidate::text) LIMIT 1 RETURNING port`, service, pool, now).Scan(&port)
+		for {
+			var selected pgtype.Int4
+			var available bool
+			err = tx.QueryRow(ctx, `WITH candidate AS MATERIALIZED (
+			    SELECT candidate AS port FROM control.ingress_service_port_ranges inventory
+			    CROSS JOIN LATERAL generate_series(inventory.first_port,inventory.last_port) candidate
+			    WHERE inventory.ingress_pool_id=$2
+			    AND NOT EXISTS(SELECT 1 FROM control.service_port_claims held WHERE held.ingress_pool_id=$2 AND held.port=candidate AND held.state<>'released')
+			    ORDER BY md5($1||'/'||candidate::text) LIMIT 1
+			), claimed AS (
+			    INSERT INTO control.service_port_claims(service_id,ingress_pool_id,port,claimed_at)
+			    SELECT $1,$2,port,$3 FROM candidate ON CONFLICT DO NOTHING RETURNING port
+			) SELECT (SELECT port FROM claimed),EXISTS(SELECT 1 FROM candidate)`, service, pool, now).Scan(&selected, &available)
+			if err != nil {
+				return 0, err
+			}
+			if selected.Valid {
+				return int(selected.Int32), nil
+			}
+			if !available {
+				return 0, ErrServicePortsExhausted
+			}
+			// a concurrent claim won this candidate. a new statement sees its
+			// committed reservation and selects another port.
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+		}
 	}
 	if err != nil {
 		return 0, publisherLookupError(err, ErrServicePortsExhausted)
