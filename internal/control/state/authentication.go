@@ -183,6 +183,9 @@ func (d *Database) createOIDCControlSession(ctx context.Context, queries *contro
 		return ControlSession{}, err
 	}
 	result.CompanyAuthenticationExpiresAt = optionalTime(deadline)
+	if err := queries.FlushChangePublications(ctx); err != nil {
+		return ControlSession{}, err
+	}
 	if !identity.AssertionExpiry.After(clock.current()) {
 		return ControlSession{}, ErrControlAuthentication
 	}

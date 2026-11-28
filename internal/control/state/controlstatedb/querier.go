@@ -153,6 +153,8 @@ type Querier interface {
 	FindShareRequest(ctx context.Context, arg FindShareRequestParams) (ControlShare, error)
 	FinishGuestServiceRun(ctx context.Context, arg FinishGuestServiceRunParams) (int64, error)
 	FinishInvitationEmail(ctx context.Context, arg FinishInvitationEmailParams) (int64, error)
+	// finish shared projection waits before the caller's final authorization check.
+	FlushChangePublications(ctx context.Context) error
 	ForgetExpiredGuestCredentials(ctx context.Context, arg ForgetExpiredGuestCredentialsParams) (int64, error)
 	// terminal allocation keys/digests remain; targets and declarations do not.
 	ForgetExpiredGuestServiceConfigurations(ctx context.Context, arg ForgetExpiredGuestServiceConfigurationsParams) (int64, error)

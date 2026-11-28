@@ -80,12 +80,11 @@ func TestIntegrationDeploymentPublisherHealthRuntimeReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer rollbackTestTransaction(t, gate)
-				// block the first operation after it takes the team lock. the second
+				// block the first operation after it takes the identity lock. the second
 				// must wait for that operation, independent of request timestamps.
-				query, args := `SELECT id FROM control.publisher_identities WHERE id=$1 FOR UPDATE`, []any{replica.member.PublisherIdentityID}
+				query, args := `SELECT publisher_identity_id FROM control.deployment_publisher_members WHERE publisher_identity_id=$1 FOR UPDATE`, []any{replica.member.PublisherIdentityID}
 				firstOp, secondOp := start, ack
 				if ordering == "ack-first" {
-					query, args = `SELECT id FROM control.deployments WHERE id=$1 FOR UPDATE`, []any{replica.member.DeploymentID}
 					firstOp, secondOp = ack, start
 				}
 				if _, err := gate.Exec(ctx, query, args...); err != nil {

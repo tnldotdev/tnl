@@ -104,6 +104,18 @@ func TestIntegrationPlacementOnlyLocksSelectedRelays(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer rollbackTestTransaction(t, gate)
+			// keep an unrelated lease blocked through the retry too. a fallback
+			// that locks the full fleet would wait here after fly is drained.
+			unrelated, err := d.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackTestTransaction(t, unrelated)
+			if held == "fly" {
+				if _, err := unrelated.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_service_id='far' FOR UPDATE`); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := gate.Exec(ctx, `SELECT relay_id FROM control.relay_leases WHERE relay_service_id=$1 FOR UPDATE`, held); err != nil {
 				t.Fatal(err)
 			}

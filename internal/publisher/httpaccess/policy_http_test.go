@@ -52,7 +52,13 @@ func TestPublisherVisitorPolicyHTTPLargeAndInvalid(t *testing.T) {
 				t.Fatal(err)
 			}
 			if fault == "bytes" {
-				raw = append(raw, []byte(strings.Repeat(" ", 8<<20))...)
+				// the snapshot itself exceeds the former 2 MiB response limit.
+				// exercise trailing whitespace without spending the live request
+				// deadline scanning another 8 MiB under the race detector.
+				if len(raw) <= 2<<20 {
+					t.Fatal("fixture no longer exceeds the former response limit")
+				}
+				raw = append(raw, []byte(strings.Repeat(" ", 4<<10))...)
 			}
 			delta := body
 			delta.SnapshotRequired = false

@@ -1416,7 +1416,7 @@ SELECT id, kind, team_id, canonical_domain, dns_authority_reference, state, auth
 FROM control.domains
 WHERE kind = 'managed'
   AND released_at IS NULL
-FOR UPDATE
+FOR SHARE
 `
 
 func (q *Queries) LockManagedDomainForClaim(ctx context.Context) (ControlDomain, error) {

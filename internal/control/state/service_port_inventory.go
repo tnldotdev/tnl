@@ -84,6 +84,11 @@ func (d *Database) configureIngressServicePorts(ctx context.Context, pool string
 		return err
 	}
 	defer rollback(ctx, tx, "configure service port inventory", &retErr)()
+	// previous serving binaries allocate under this guard. keep configuration
+	// compatible with them; current allocators share the pool row below.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('managed-ports/'||$1,0))`, pool); err != nil {
+		return err
+	}
 	var configured bool
 	if err = tx.QueryRow(ctx, `SELECT ports_configured FROM control.ingress_pools WHERE id=$1 FOR UPDATE`, pool).Scan(&configured); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

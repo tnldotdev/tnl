@@ -191,6 +191,9 @@ func (d *Database) RedeemScopedDeploymentPublisherEnrollment(ctx context.Context
 	if err = recordDeploymentPublisherUpdate(ctx, tx, gid, "", id, "enroll-member/"+id, now); err != nil {
 		return result, err
 	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return DeploymentPublisherIdentity{}, err
+	}
 	if !until.After(clock.current()) {
 		return DeploymentPublisherIdentity{}, ErrDeploymentPublisher
 	}

@@ -17,7 +17,7 @@ import (
 )
 
 func TestIntegrationServiceEndpointDNSRetryMigration(t *testing.T) {
-	for _, prior := range []int64{1, 2, 3, 4, 5} {
+	for _, prior := range []int64{1, 2, 3, 4, 5, 6} {
 		t.Run(fmt.Sprintf("from-v%d", prior), func(t *testing.T) {
 			checkPopulatedDNSSchemaUpgrade(t, prior)
 		})
@@ -133,6 +133,11 @@ func checkPopulatedDNSSchemaUpgrade(t *testing.T, priorVersion int64) {
 	if priorVersion >= 4 {
 		// the v4 runtime inherited select alone on the change records.
 		if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf(`REVOKE INSERT,UPDATE,DELETE ON control.read_dependency_versions FROM %s`, pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if priorVersion >= 6 {
+		if _, err := sqlDB.ExecContext(ctx, `REVOKE ALL ON control.pending_change_publications FROM `+pgx.Identifier{cfg.Database + "_read_runtime"}.Sanitize()); err != nil {
 			t.Fatal(err)
 		}
 	}

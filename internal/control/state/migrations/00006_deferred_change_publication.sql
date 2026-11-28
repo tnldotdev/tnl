@@ -6,7 +6,7 @@ SET LOCAL lock_timeout = '5s';
 -- the queue is emptied in that same transaction; rollback leaves nothing behind.
 CREATE TABLE control.pending_change_publications (
     transaction_id xid8 NOT NULL,
-    kind text NOT NULL CHECK (kind IN ('audit','registered_key','read_dependency')),
+    kind text NOT NULL CHECK (kind IN ('audit','registered_key','read_dependency','publishing')),
     scope text[] NOT NULL,
     PRIMARY KEY(transaction_id,kind,scope)
 );
@@ -116,6 +116,15 @@ BEGIN
     IF NEW.transaction_id<>pg_current_xact_id() THEN
         RAISE EXCEPTION 'change publication transaction does not match';
     END IF;
+    IF NOT EXISTS(SELECT 1 FROM control.pending_change_publications WHERE transaction_id=NEW.transaction_id)
+        OR EXISTS(SELECT 1 FROM control.pending_change_publications
+            WHERE transaction_id=NEW.transaction_id AND kind='publishing') THEN
+        RETURN NULL;
+    END IF;
+    -- SET CONSTRAINTS IMMEDIATE is used before final deadline checks. a key
+    -- counter then queues read invalidations synchronously; keep its recursive
+    -- callback inside this flush rather than publishing the same changes twice.
+    PERFORM control.queue_change_publication('publishing',ARRAY[]::text[]);
     FOR owner IN SELECT DISTINCT scope[1] COLLATE "C" FROM control.pending_change_publications
         WHERE transaction_id=NEW.transaction_id AND kind='audit' ORDER BY 1 LOOP
         PERFORM pg_advisory_xact_lock(hashtextextended('tnl:service-audit:'||owner,0));

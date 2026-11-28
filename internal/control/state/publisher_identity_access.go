@@ -277,6 +277,9 @@ func (d *Database) RotatePublisherKey(ctx context.Context, token, sourceIP, repl
 	if err := q.InsertPublisherKey(ctx, controlstatedb.InsertPublisherKeyParams{ID: replacementID, PublisherIdentityID: identity.ID, PublicKey: public, Revision: k.Revision + 1, CreatedAt: timestamptz(now)}); err != nil {
 		return err
 	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return err
+	}
 	if !a.Until.After(clock.current()) || !current.Until.After(clock.current()) {
 		return ErrPublisherIdentity
 	}

@@ -251,6 +251,9 @@ func (d *Database) PublisherRuntime(ctx context.Context, r PublisherRuntimeReque
 			return result, err
 		}
 	}
+	if err = q.FlushChangePublications(ctx); err != nil {
+		return PublisherRuntimeResponse{}, err
+	}
 	if !a.Until.After(clock.current()) {
 		return PublisherRuntimeResponse{}, ErrPublisherIdentity
 	}

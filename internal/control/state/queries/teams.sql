@@ -526,7 +526,7 @@ SELECT *
 FROM control.domains
 WHERE kind = 'managed'
   AND released_at IS NULL
-FOR UPDATE;
+FOR SHARE;
 
 -- name: ListCurrentDomainNames :many
 SELECT canonical_domain

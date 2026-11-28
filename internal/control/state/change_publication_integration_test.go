@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tnldotdev/tnl/internal/control/state/controlstatedb"
 	"github.com/tnldotdev/tnl/internal/observability/serviceaudit"
 )
 
@@ -12,6 +13,10 @@ func TestIntegrationChangePublicationDoesNotHoldAnotherOperation(t *testing.T) {
 	f := newServicePublicationFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
+	var initial int64
+	if err := f.database.pool.QueryRow(ctx, `SELECT COALESCE((SELECT revision FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=-1),0)`).Scan(&initial); err != nil {
+		t.Fatal(err)
+	}
 	slow, err := f.database.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -44,12 +49,15 @@ func TestIntegrationChangePublicationDoesNotHoldAnotherOperation(t *testing.T) {
 	    control.queue_change_publication('read_dependency',ARRAY['ingress','-1'])`, f.service.TeamID); err != nil {
 		t.Fatal("a slow operation held shared counters", err)
 	}
+	if err := controlstatedb.New(fast).FlushChangePublications(progress); err != nil {
+		t.Fatal("final authorization could not flush pending projections", err)
+	}
 	if err := fast.Commit(progress); err != nil {
 		t.Fatal("a slow operation blocked another commit", err)
 	}
 	var before int64
-	if err := f.database.pool.QueryRow(ctx, `SELECT revision FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=-1`).Scan(&before); err != nil {
-		t.Fatal(err)
+	if err := f.database.pool.QueryRow(ctx, `SELECT revision FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=-1`).Scan(&before); err != nil || before != initial+1 {
+		t.Fatal("immediate constraints published a change more than once", initial, before, err)
 	}
 	if err := slow.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -61,7 +69,7 @@ func TestIntegrationChangePublicationDoesNotHoldAnotherOperation(t *testing.T) {
 	    WHERE earlier.id=$1 AND later.id=$2`, next.ID, event.ID).Scan(&ordered); err != nil || !ordered {
 		t.Fatal("cursor pagination would skip the late commit", err)
 	}
-	if err := f.database.pool.QueryRow(ctx, `SELECT revision FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=-1`).Scan(&after); err != nil || after <= before {
+	if err := f.database.pool.QueryRow(ctx, `SELECT revision FROM control.read_dependency_versions WHERE topic='ingress' AND bucket=-1`).Scan(&after); err != nil || after != before+1 {
 		t.Fatal("the late commit lost its cache invalidation", before, after, err)
 	}
 	var pending int

@@ -30,10 +30,12 @@ func (d *Database) ReserveOperatorNameservers(ctx context.Context, domain, setID
 		return err
 	}
 	defer rollback(ctx, tx, "reserve operator nameservers", &retErr)()
-	// claims and endpoints acquire an ordinary read lock on this table
-	// before writing. exclude them while installing new reservations.
-	if _, err := tx.Exec(ctx, `LOCK TABLE control.operator_nameserver_hostnames IN ACCESS EXCLUSIVE MODE`); err != nil {
-		return err
+	// claims and endpoint triggers join these exact names. unrelated domains
+	// and endpoint writes can proceed while a reservation is being installed.
+	for _, name := range names {
+		if _, err := tx.Exec(ctx, `SELECT control.lock_dns_claim_name($1,true)`, name); err != nil {
+			return err
+		}
 	}
 	var conflict bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
