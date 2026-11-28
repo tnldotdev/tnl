@@ -122,15 +122,12 @@ schemas:
         description: Current public endpoint only. Its removal does not revoke connector access or change the run's captured TLS hostname.
       verification_keys:
         type: array
-        maxItems: 64
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorVerificationKey" }
       workload_leases:
         type: array
-        maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorWorkloadLease" }
       registered_key_leases:
         type: array
-        maxItems: 4096
         items: { $ref: "../openapi.yaml#/components/schemas/VisitorRegisteredKeyLease" }
       ip: { $ref: "../openapi.yaml#/components/schemas/VisitorPolicyIP" }
   VisitorPublicEndpoint:

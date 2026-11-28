@@ -1,4 +1,4 @@
-// package visitorpolicy supplies bounded generated-wire fixtures for policy HTTP
+// package visitorpolicy supplies generated-wire fixtures for policy HTTP
 // and publisher consumer tests. it contains no production validation rules.
 package visitorpolicy
 
@@ -16,7 +16,7 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed25519.PrivateKey) {
+func Large(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed25519.PrivateKey) {
 	t.Helper()
 	private := ed25519.NewKeyFromSeed([]byte(strings.Repeat("k", 32)))
 	digest, err := visitortoken.KeyDigest(private.Public().(ed25519.PublicKey))
@@ -29,9 +29,9 @@ func Maximum(t testing.TB, now time.Time) (controlv1.VisitorPolicyUpdate, ed2551
 		Issuer: "https://" + strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 56),
 		Port:   65535, VisitorPolicyRevision: 1, KeyRevision: math.MaxInt64,
 		ObservedAt: now, ValidUntil: now.Add(10 * time.Second), Enabled: true,
-		VerificationKeys:    make([]controlv1.VisitorVerificationKey, 64),
-		WorkloadLeases:      make([]controlv1.VisitorWorkloadLease, 4096),
-		RegisteredKeyLeases: make([]controlv1.VisitorRegisteredKeyLease, 4096),
+		VerificationKeys:    make([]controlv1.VisitorVerificationKey, 65),
+		WorkloadLeases:      make([]controlv1.VisitorWorkloadLease, 8193),
+		RegisteredKeyLeases: make([]controlv1.VisitorRegisteredKeyLease, 8193),
 	}
 	for i := range policy.VerificationKeys {
 		policy.VerificationKeys[i] = controlv1.VisitorVerificationKey{Id: strings.Repeat("\x01", 126) + fmt.Sprintf("%02d", i), PublicKey: private.Public().(ed25519.PublicKey)}

@@ -137,11 +137,12 @@ func (d *Database) CreateOIDCControlSession(
 }
 
 func (d *Database) createOIDCControlSession(ctx context.Context, queries *controlstatedb.Queries, managedDomain string, identity OIDCIdentity, accessLifetime, refreshLifetime time.Duration, now time.Time) (result ControlSession, err error) {
-	if err := queries.LockIdentityBootstrap(ctx); err != nil {
+	clock := newAuthorizationClock(now)
+	if err := queries.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: identity.Issuer, Subject: identity.Subject}); err != nil {
 		return ControlSession{}, fmt.Errorf("controlstate: lock OIDC identity provisioning: %w", err)
 	}
-	if err := queries.DeleteExpiredOIDCAssertionExchanges(ctx, timestamptz(now)); err != nil {
-		return ControlSession{}, fmt.Errorf("controlstate: expire OIDC assertion exchanges: %w", err)
+	if !identity.AssertionExpiry.After(clock.current()) {
+		return ControlSession{}, ErrControlAuthentication
 	}
 	inserted, err := queries.ConsumeOIDCAssertion(ctx, controlstatedb.ConsumeOIDCAssertionParams{
 		AssertionDigest: identity.AssertionDigest[:], ConsumedAt: timestamptz(now),
@@ -182,6 +183,9 @@ func (d *Database) createOIDCControlSession(ctx context.Context, queries *contro
 		return ControlSession{}, err
 	}
 	result.CompanyAuthenticationExpiresAt = optionalTime(deadline)
+	if !identity.AssertionExpiry.After(clock.current()) {
+		return ControlSession{}, ErrControlAuthentication
+	}
 	return result, nil
 }
 
@@ -276,10 +280,14 @@ func ensureManagedDomain(
 		}); err != nil {
 			return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: create managed domain: %w", err)
 		}
-		domain.ID, domain.CanonicalDomain = domainID, managedDomain
-	} else if err != nil {
+		// a concurrent first login may have inserted the singleton. read its
+		// committed identity instead of returning our unused generated id.
+		domain, err = queries.FindManagedDomain(ctx)
+	}
+	if err != nil {
 		return controlstatedb.ControlDomain{}, fmt.Errorf("controlstate: read managed domain: %w", err)
-	} else if domain.CanonicalDomain != managedDomain {
+	}
+	if domain.CanonicalDomain != managedDomain {
 		return controlstatedb.ControlDomain{}, ErrManagedDomainMismatch
 	}
 	return domain, nil

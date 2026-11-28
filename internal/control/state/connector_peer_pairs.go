@@ -22,8 +22,6 @@ import (
 	"github.com/tnldotdev/tnl/pkg/protocol/tunnelv1"
 )
 
-const maxConnectorPeerPairOwners = 64
-
 // ConnectorPeerPairRequest is an authority request, not a visitor stream opening.
 // source must be a current device control session or workload credential. the
 // signature proves possession of that source's enrolled native key.
@@ -232,7 +230,6 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	}
 	requestDigest := sha256.Sum256(message)
 	ownerKey := r.IdempotencyKey
-	needsOwnerSlot := true
 	var row controlstatedb.ControlConnectorPeerPair
 	// the signed key names the owner for every action. pair IDs never select one.
 	row, err = q.GetConnectorPeerPairForOwner(ctx, controlstatedb.GetConnectorPeerPairForOwnerParams{
@@ -289,7 +286,6 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 				r.IdempotencyKey != row.IdempotencyKey || requestAt.Before(row.LastRequestAt.Time) {
 				return ConnectorPeerPair{}, ErrServiceConflict
 			}
-			needsOwnerSlot = !row.ExpiresAt.Time.After(now) && !row.ReplayFenceUntil.Time.After(now)
 			if count, deleteErr := q.ReplaceConnectorPeerPair(ctx, row.ID); deleteErr != nil || count != 1 {
 				return ConnectorPeerPair{}, errors.Join(ErrServiceConflict, deleteErr)
 			}
@@ -313,18 +309,6 @@ func (d *Database) authorizeConnectorPeerPair(ctx context.Context, r ConnectorPe
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		if r.Action == "renew" || r.Action == "replace" && row.ID == "" || r.Action == "create" && r.PreviousPairID != "" {
 			return ConnectorPeerPair{}, ErrServiceAccess
-		}
-		if needsOwnerSlot {
-			// the run lock serializes fresh owners with replacement and renewal.
-			// retained replay fences consume the same bounded owner budget.
-			count, err := q.CountConnectorPeerPairOwners(ctx, controlstatedb.CountConnectorPeerPairOwnersParams{
-				ServiceRunID: run.ID, Now: timestamptz(now), OwnerLimit: maxConnectorPeerPairOwners})
-			if err != nil {
-				return ConnectorPeerPair{}, err
-			}
-			if count >= maxConnectorPeerPairOwners {
-				return ConnectorPeerPair{}, ErrServiceConflict
-			}
 		}
 		id, err := opaqueid.New("cpp_")
 		if err != nil {

@@ -9,12 +9,12 @@ import (
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 )
 
-func TestMaximumPolicyWireBudget(t *testing.T) {
+func TestLargePolicyCrossesFormerInventoryBudgets(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 123456789, time.UTC)
-	body, _ := Maximum(t, now)
+	body, _ := Large(t, now)
 	update, err := visitorlease.Decode(body)
 	if err != nil {
-		t.Fatal("maximum fixture is not a valid decoder base", err)
+		t.Fatal("large fixture is not a valid decoder base", err)
 	}
 	lease, err := visitorlease.New(update.View.Scope, nil)
 	if err != nil {
@@ -22,7 +22,7 @@ func TestMaximumPolicyWireBudget(t *testing.T) {
 	}
 	defer lease.Close()
 	if err := lease.Apply(lease.Begin(), update); err != nil {
-		t.Fatal("maximum fixture is not an installable base", err)
+		t.Fatal("large fixture is not an installable base", err)
 	}
 
 	body.AfterRevision = math.MaxInt64 - 256
@@ -36,9 +36,8 @@ func TestMaximumPolicyWireBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const accounted = (16 << 10) + 64*(1<<10) + 4096*192 + 4096*224 + 2048*128
-	if accounted > 2<<20 || len(raw) > accounted {
-		t.Fatal("valid combined fixture exceeds the existing response accounting")
+	if len(raw) <= 2<<20 {
+		t.Fatal("fixture no longer crosses the former response limit")
 	}
 	t.Logf("valid combined generated policy with keys and 256 events: %d bytes", len(raw))
 }

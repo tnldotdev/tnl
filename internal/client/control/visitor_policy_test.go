@@ -16,10 +16,10 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
-	body, _ := policyfixture.Maximum(t, time.Date(2026, 10, 28, 12, 0, 0, 123456789, time.UTC))
-	if len(body.Policy.VerificationKeys) != 64 || len(body.Policy.WorkloadLeases) != 4096 || len(body.Policy.RegisteredKeyLeases) != 4096 || len(body.Policy.Ip.Prefixes) != 2048 {
-		t.Fatal("maximum fixture lost a contracted collection limit")
+func TestPublisherVisitorPolicyHTTPClientBeyondFormerLimits(t *testing.T) {
+	body, _ := policyfixture.Large(t, time.Date(2026, 10, 28, 12, 0, 0, 123456789, time.UTC))
+	if len(body.Policy.VerificationKeys) <= 64 || len(body.Policy.WorkloadLeases) <= 4096 || len(body.Policy.RegisteredKeyLeases) <= 4096 || len(body.Policy.Ip.Prefixes) != 2048 {
+		t.Fatal("large fixture no longer crosses the former collection limits")
 	}
 	body.AfterRevision = math.MaxInt64 - 256
 	body.Policy.VisitorPolicyRevision = math.MaxInt64
@@ -32,9 +32,9 @@ func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("maximum combined generated policy: %d bytes", len(raw))
-	if len(raw) <= 512<<10 || len(raw) > maxVisitorPolicyResponseBytes {
-		t.Fatal("combined fixture does not exercise the policy-specific byte budget")
+	t.Logf("large combined generated policy: %d bytes", len(raw))
+	if len(raw) <= 2<<20 {
+		t.Fatal("combined fixture does not cross the former response limit")
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/visitor-policy" || r.Header.Get("Authorization") != "Bearer fixture-run-secret" {
@@ -50,13 +50,13 @@ func TestPublisherVisitorPolicyHTTPClientMaximum(t *testing.T) {
 	}
 	result, err := client.ReadPublisherVisitorPolicy(t.Context(), controlv1.PublisherVisitorPolicyRequest{Resource: body.Policy.Resource, RunId: "srun_" + strings.Repeat("R", 22), RunNumber: math.MaxInt64}, "fixture-run-secret")
 	if err != nil {
-		t.Fatal("real policy client rejected the maximum combined response", err)
+		t.Fatal("real policy client rejected the large combined response", err)
 	}
 	if !reflect.DeepEqual(result, body) {
 		t.Fatal("policy client dropped fields or truncated the snapshot")
 	}
 	if _, err := visitorlease.Decode(result); err != nil {
-		t.Fatal("maximum combined response did not reach local policy decoding", err)
+		t.Fatal("large combined response did not reach local policy decoding", err)
 	}
 }
 
@@ -66,8 +66,8 @@ func TestPublisherVisitorPolicyHTTPClientResponseBudgetStaysLocal(t *testing.T) 
 		size          int
 		policy, valid bool
 	}{
-		{"policy at budget", maxVisitorPolicyResponseBytes, true, true},
-		{"policy above budget", maxVisitorPolicyResponseBytes + 1, true, false},
+		{"policy at former budget", 2 << 20, true, true},
+		{"policy above former budget", (2 << 20) + 1, true, true},
 		{"unrelated operation retains one MiB", maxResponseBytes + 1, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestPublisherVisitorPolicyHTTPClientResponseBudgetStaysLocal(t *testing.T) 
 			}
 			if tc.valid {
 				if err != nil {
-					t.Fatal("policy exactly at byte limit was rejected", err)
+					t.Fatal("policy inventory was rejected", err)
 				}
 				return
 			}

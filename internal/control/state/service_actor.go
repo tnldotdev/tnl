@@ -203,7 +203,7 @@ func serviceReadOptions(ctx context.Context) pgx.TxOptions {
 }
 
 // beginServiceAccess keeps issuer identity updates ahead of team/admission locks,
-// matching company owner proof and OIDC login's identity bootstrap ordering.
+// matching company owner proof and OIDC login's issuer-subject ordering.
 func (d *Database) beginServiceAccess(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
 	return d.beginServiceActorTransaction(ctx, options, false)
 }
@@ -217,13 +217,14 @@ func (d *Database) beginServiceActorTransaction(ctx context.Context, options pgx
 	if err != nil {
 		return nil, err
 	}
-	if _, signed := serviceActor(ctx); signed {
+	if proof, signed := serviceActor(ctx); signed {
 		q := controlstatedb.New(tx)
-		guard := q.LockIdentityBootstrap
 		if observe {
-			guard = q.ObserveIdentityBootstrap
+			err = q.ObserveOIDCIdentity(ctx, controlstatedb.ObserveOIDCIdentityParams{Issuer: proof.identity.Issuer, Subject: proof.identity.Subject})
+		} else {
+			err = q.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: proof.identity.Issuer, Subject: proof.identity.Subject})
 		}
-		if err = guard(ctx); err != nil {
+		if err != nil {
 			rollback(ctx, tx, "begin service access", &err)()
 			return nil, err
 		}

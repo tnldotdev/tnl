@@ -12,7 +12,6 @@ import (
 	"time"
 
 	clientcontrol "github.com/tnldotdev/tnl/internal/client/control"
-	"github.com/tnldotdev/tnl/internal/failure"
 	"github.com/tnldotdev/tnl/internal/policy/visitorlease"
 	"github.com/tnldotdev/tnl/internal/policy/visitorscope"
 	"github.com/tnldotdev/tnl/internal/security/visitortoken"
@@ -20,21 +19,19 @@ import (
 	controlv1 "github.com/tnldotdev/tnl/pkg/api/control/public/v1"
 )
 
-func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
-	for _, fault := range []string{"maximum", "keys", "workloads", "registered keys", "duplicate registered key", "expired registered key", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
+func TestPublisherVisitorPolicyHTTPLargeAndInvalid(t *testing.T) {
+	for _, fault := range []string{"large", "duplicate keys", "duplicate workloads", "duplicate registered key", "expired registered key", "prefixes", "events", "nil key", "short key", "overlong key", "bytes"} {
 		t.Run(fault, func(t *testing.T) {
-			body, private := policyfixture.Maximum(t, time.Now().UTC())
+			body, private := policyfixture.Large(t, time.Now().UTC())
 			body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 			if _, err := visitorlease.Decode(body); err != nil {
-				t.Fatal("maximum base is invalid before applying the boundary fault", err)
+				t.Fatal("large base is invalid before applying the boundary fault", err)
 			}
 			switch fault {
-			case "keys":
+			case "duplicate keys":
 				body.Policy.VerificationKeys = append(body.Policy.VerificationKeys, body.Policy.VerificationKeys[0])
-			case "workloads":
+			case "duplicate workloads":
 				body.Policy.WorkloadLeases = append(body.Policy.WorkloadLeases, body.Policy.WorkloadLeases[0])
-			case "registered keys":
-				body.Policy.RegisteredKeyLeases = append(body.Policy.RegisteredKeyLeases, body.Policy.RegisteredKeyLeases[0])
 			case "duplicate registered key":
 				body.Policy.RegisteredKeyLeases[1] = body.Policy.RegisteredKeyLeases[0]
 			case "expired registered key":
@@ -77,7 +74,7 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if fault == "maximum" && request.AfterRevision == delta.AfterRevision {
+				if (fault == "large" || fault == "bytes") && request.AfterRevision == delta.AfterRevision {
 					_, _ = w.Write(deltaRaw)
 				} else {
 					_, _ = w.Write(raw)
@@ -89,26 +86,22 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 				t.Fatal(err)
 			}
 			policy, err := PreparePolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.Service, ID: body.Policy.Resource.Id}, "srun_"+strings.Repeat("R", 22), 1, "fixture-run-secret", nil)
-			if fault != "maximum" {
+			if fault != "large" && fault != "bytes" {
 				if policy != nil {
 					policy.Close()
 					t.Fatal("invalid policy became prepared")
 				}
-				if fault == "bytes" {
-					if reason, ok := failure.ReasonOf(err); !ok || reason != failure.ServerResponseInvalid {
-						t.Fatal("oversized HTTP policy lost its byte-boundary failure")
-					}
-				} else if !errors.Is(err, visitorlease.ErrUpdate) {
-					t.Fatal("oversized policy items did not fail before installation", err)
+				if !errors.Is(err, visitorlease.ErrUpdate) {
+					t.Fatal("invalid policy items did not fail before installation", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatal("actual publisher preparation rejected bounded maximum HTTP policy", err)
+				t.Fatal("actual publisher preparation rejected large HTTP policy", err)
 			}
 			defer policy.Close()
 			if err := policy.Refresh(t.Context()); err != nil {
-				t.Fatal("publisher could not install all 256 events with maximum state", err)
+				t.Fatal("publisher could not install all 256 events with large state", err)
 			}
 			view, enabled, _ := policy.Lease().Current()
 			if !enabled || view.VisitorPolicyRevision != math.MaxInt64 {
@@ -157,8 +150,8 @@ func TestPublisherVisitorPolicyHTTPMaximumAndBounds(t *testing.T) {
 	}
 }
 
-func TestPublisherVisitorPolicyHTTPMaximumSharedIngressService(t *testing.T) {
-	body, _ := policyfixture.Maximum(t, time.Now().UTC())
+func TestPublisherVisitorPolicyHTTPLargeSharedIngressService(t *testing.T) {
+	body, _ := policyfixture.Large(t, time.Now().UTC())
 	body.Policy.Port = 443
 	body.Policy.VisitorPolicyRevision = math.MaxInt64 - 256
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -190,11 +183,11 @@ func TestPublisherVisitorPolicyHTTPMaximumSharedIngressService(t *testing.T) {
 	}
 	policy, err := PreparePolicy(t.Context(), client, visitorscope.Scope{Kind: visitorscope.Service, ID: body.Policy.Resource.Id}, "srun_0123456789abcdefghijkl", 1, "fixture-run-secret", nil)
 	if err != nil {
-		t.Fatal("HTTP service did not fit the unchanged maximum-policy HTTP budget", err)
+		t.Fatal("HTTP service rejected a large policy", err)
 	}
 	defer policy.Close()
 	if err := policy.Refresh(t.Context()); err != nil {
-		t.Fatal("maximum HTTP service delta did not fit the original preparation budget", err)
+		t.Fatal("large HTTP service delta was rejected", err)
 	}
 	view, enabled, _ := policy.Lease().Current()
 	if !enabled || view.Port != 443 || view.VisitorPolicyRevision != math.MaxInt64 {

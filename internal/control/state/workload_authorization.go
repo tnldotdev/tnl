@@ -41,7 +41,7 @@ func lockWorkloadCredential(ctx context.Context, tx pgx.Tx, credential string, c
 	if err != nil {
 		return workloadAuthority{}, publisherLookupError(err, ErrWorkloadDenied)
 	}
-	if _, err = controlstatedb.New(tx).LockLocalTeamForMutation(ctx, team); err != nil {
+	if _, err = controlstatedb.New(tx).LockLocalTeamForSession(ctx, team); err != nil {
 		return workloadAuthority{}, publisherLookupError(err, ErrWorkloadDenied)
 	}
 	var created, renewed time.Time

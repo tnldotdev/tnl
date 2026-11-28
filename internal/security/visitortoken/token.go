@@ -190,9 +190,6 @@ func (v View) Workload(id string) (WorkloadLease, bool) {
 func (v View) HasSigningKey(id string) bool { return len(v.keys[id]) == ed25519.PublicKeySize }
 
 func (v View) ValidVerificationKeys() bool {
-	if len(v.keys) > 64 {
-		return false
-	}
 	for id, key := range v.keys {
 		if id == "" || len(key) != ed25519.PublicKeySize {
 			return false

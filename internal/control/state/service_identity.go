@@ -31,7 +31,7 @@ func (d *Database) EnsureServiceIdentity(ctx context.Context, managedDomain stri
 	}
 	defer rollback(ctx, tx, "resolve service identity", &retErr)()
 	queries := controlstatedb.New(tx)
-	if err := queries.LockIdentityBootstrap(ctx); err != nil {
+	if err := queries.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: identity.Issuer, Subject: identity.Subject}); err != nil {
 		return result, err
 	}
 	stored, err := ensureOIDCIdentity(ctx, queries, managedDomain, d.managedURLMode, identity, now)

@@ -22,13 +22,12 @@ import (
 )
 
 const (
-	maxPublisherWatchRuns   = 64
-	maxPublisherWatchScopes = 2048
-	publisherWatchInterval  = 250 * time.Millisecond
-	publisherWatchWait      = 15 * time.Second
-	publisherWatchQuery     = time.Second
-	publisherWatchAuth      = 3 * time.Second
-	watchLogRequestIDs      = 128
+	maxPublisherWatchRuns  = 64
+	publisherWatchInterval = 250 * time.Millisecond
+	publisherWatchWait     = 15 * time.Second
+	publisherWatchQuery    = time.Second
+	publisherWatchAuth     = 3 * time.Second
+	watchLogRequestIDs     = 128
 )
 
 var errPublisherWatchStopped = errors.New("publisher watch stopped")
@@ -46,12 +45,11 @@ type PublisherWatchStore interface {
 }
 
 // PublisherWatch batches the control process's authorized waits. it owns no
-// grants or database connections; waits release their own reservations.
+// grants or database connections; requests remove their waits on completion.
 type PublisherWatch struct {
 	store PublisherWatchStore
 	done  chan struct{}
 	mu    sync.Mutex
-	used  int
 	waits map[*publisherWatchWaiter]struct{}
 }
 
@@ -83,22 +81,6 @@ func (watch *PublisherWatch) Run(ctx context.Context) error {
 			watch.compare(ctx)
 		}
 	}
-}
-
-func (watch *PublisherWatch) reserve(count int) bool {
-	watch.mu.Lock()
-	defer watch.mu.Unlock()
-	if count > maxPublisherWatchScopes-watch.used {
-		return false
-	}
-	watch.used += count
-	return true
-}
-
-func (watch *PublisherWatch) release(count int) {
-	watch.mu.Lock()
-	defer watch.mu.Unlock()
-	watch.used -= count
 }
 
 func (watch *PublisherWatch) compare(ctx context.Context) {
@@ -314,13 +296,6 @@ func (h *handler) WatchPublisherRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		index[run.ServiceRunId] = i
 	}
-	if !watch.reserve(len(body.Runs)) {
-		w.Header().Set("Retry-After", "1")
-		writeProblem(w, http.StatusTooManyRequests, controlv1.RateLimited, "publisher watch at capacity")
-		return
-	}
-	defer watch.release(len(body.Runs))
-
 	seen := make([]controlstate.ConnectorPeerWatchVersion, 0, len(body.Runs))
 	changes := make([]controlstate.ConnectorPeerWatchVersion, 0, len(body.Runs))
 	auth, stop := context.WithTimeout(r.Context(), publisherWatchAuth)

@@ -8,18 +8,14 @@ WHERE id=ANY(sqlc.arg(service_ids)::text[])
 ORDER BY COALESCE(team_id,'guest/'||guest_id) COLLATE "C",id COLLATE "C";
 
 -- name: InsertServiceAuditEvents :many
--- earlier owners are already locked in order. take the final owner's clock
--- before allocating a cursor; the arrays have one element per event.
-WITH clock AS MATERIALIZED (
-    SELECT pg_advisory_xact_lock(hashtextextended('tnl:service-audit:' ||
-        COALESCE(sqlc.narg(team_id)::text,'guest/'||sqlc.narg(guest_id)::text),0))
-)
+-- callers order owners before insertion. the deferred trigger publishes each
+-- cursor at commit, so slow operations do not hold other services' audit clocks.
 INSERT INTO control.service_audit_events(id,team_id,guest_id,service_id,event_type,occurred_at,received_at,
     actor_identity_id,device_id,publisher_identity_id,run_id,visitor_connection_id,source_digest,outcome,reason,configuration_revision)
 SELECT e.id,NULLIF(e.team,''),s.guest_id,s.id,e.kind,e.happened,sqlc.arg(received_at),
     NULLIF(e.actor,''),NULLIF(e.device,''),NULLIF(e.publisher,''),NULLIF(e.run,''),NULLIF(e.visitor,''),
     NULLIF(e.source,''),NULLIF(e.outcome,''),NULLIF(e.reason,''),NULLIF(e.revision,0)
-FROM clock CROSS JOIN control.services s CROSS JOIN (
+FROM control.services s CROSS JOIN (
     SELECT unnest(sqlc.arg(ids)::text[]) AS id,unnest(sqlc.arg(teams)::text[]) AS team,
         unnest(sqlc.arg(services)::text[]) AS service,unnest(sqlc.arg(kinds)::text[]) AS kind,
         unnest(sqlc.arg(times)::timestamptz[]) AS happened,unnest(sqlc.arg(actors)::text[]) AS actor,

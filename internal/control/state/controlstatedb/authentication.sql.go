@@ -157,7 +157,7 @@ INSERT INTO control.domains (
     $3,
     $3,
     $3
-)
+) ON CONFLICT DO NOTHING
 `
 
 type CreateManagedDomainParams struct {
@@ -317,16 +317,6 @@ func (q *Queries) CreatePersonalTeam(ctx context.Context, arg CreatePersonalTeam
 		arg.CreatedByIdentityID,
 		arg.CreatedAt,
 	)
-	return err
-}
-
-const deleteExpiredOIDCAssertionExchanges = `-- name: DeleteExpiredOIDCAssertionExchanges :exec
-DELETE FROM control.oidc_assertion_exchanges
-WHERE expires_at <= $1
-`
-
-func (q *Queries) DeleteExpiredOIDCAssertionExchanges(ctx context.Context, now pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, deleteExpiredOIDCAssertionExchanges, now)
 	return err
 }
 
@@ -612,12 +602,20 @@ func (q *Queries) LockControlSessionByRefreshID(ctx context.Context, refreshToke
 	return i, err
 }
 
-const lockIdentityBootstrap = `-- name: LockIdentityBootstrap :exec
-SELECT pg_advisory_xact_lock(837174137711267953)
+const lockOIDCIdentity = `-- name: LockOIDCIdentity :exec
+SELECT pg_advisory_xact_lock(hashtextextended('tnl:oidc-identity:' ||
+    jsonb_build_array($1::text,$2::text)::text,0))
 `
 
-func (q *Queries) LockIdentityBootstrap(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, lockIdentityBootstrap)
+type LockOIDCIdentityParams struct {
+	Issuer  string
+	Subject string
+}
+
+// identity provisioning and signed actions coordinate only the exact issuer
+// subject, including its first insertion when there is no row to lock yet.
+func (q *Queries) LockOIDCIdentity(ctx context.Context, arg LockOIDCIdentityParams) error {
+	_, err := q.db.Exec(ctx, lockOIDCIdentity, arg.Issuer, arg.Subject)
 	return err
 }
 
@@ -632,12 +630,18 @@ func (q *Queries) LoginTeamRequiresCompany(ctx context.Context, id string) (bool
 	return company_sign_in_required, err
 }
 
-const observeIdentityBootstrap = `-- name: ObserveIdentityBootstrap :exec
-SELECT pg_advisory_xact_lock_shared(837174137711267953)
+const observeOIDCIdentity = `-- name: ObserveOIDCIdentity :exec
+SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:oidc-identity:' ||
+    jsonb_build_array($1::text,$2::text)::text,0))
 `
 
-func (q *Queries) ObserveIdentityBootstrap(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, observeIdentityBootstrap)
+type ObserveOIDCIdentityParams struct {
+	Issuer  string
+	Subject string
+}
+
+func (q *Queries) ObserveOIDCIdentity(ctx context.Context, arg ObserveOIDCIdentityParams) error {
+	_, err := q.db.Exec(ctx, observeOIDCIdentity, arg.Issuer, arg.Subject)
 	return err
 }
 

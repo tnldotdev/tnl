@@ -56,6 +56,9 @@ SELECT * FROM control.deployments WHERE team_id=sqlc.arg(team_id) AND project_ke
 -- name: LockDeploymentByID :one
 SELECT * FROM control.deployments WHERE id=sqlc.arg(id) AND deleted_at IS NULL FOR UPDATE;
 
+-- name: ObserveDeploymentByID :one
+SELECT * FROM control.deployments WHERE id=sqlc.arg(id) AND deleted_at IS NULL FOR SHARE;
+
 -- name: LockDeployment :one
 SELECT g.* FROM control.deployments g
 WHERE g.team_id=sqlc.arg(team_id) AND g.project_key=sqlc.arg(project_key) AND g.deleted_at IS NULL

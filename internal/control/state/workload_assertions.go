@@ -68,7 +68,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if !bytes.Equal(row.CredentialDigest, digest[:]) {
 		return result, ErrWorkloadDenied
 	}
-	if _, err := controlstatedb.New(tx).LockLocalTeamForMutation(ctx, row.TeamID); err != nil {
+	if _, err := controlstatedb.New(tx).LockLocalTeamForSession(ctx, row.TeamID); err != nil {
 		return result, err
 	}
 	// storage rotation can hold the session row without the team gate. take
@@ -84,7 +84,7 @@ func (d *Database) AttachWorkloadAssertion(ctx context.Context, id, credential s
 	if previous.IdentityDigest() != c.IdentityDigest() || !ed25519.Verify(row.PublicKey, workloadproof.Attach(id, c.AssertionDigest), signature) {
 		return result, ErrWorkloadDenied
 	}
-	project, err := controlstatedb.New(tx).LockAppliedProject(ctx, controlstatedb.LockAppliedProjectParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
+	project, err := controlstatedb.New(tx).ObserveAppliedProject(ctx, controlstatedb.ObserveAppliedProjectParams{TeamID: row.TeamID, ProjectKey: row.ProjectKey})
 	if err != nil {
 		return result, err
 	}

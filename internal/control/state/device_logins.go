@@ -77,16 +77,7 @@ func (d *Database) CreateDeviceLogin(ctx context.Context, options DeviceLoginOpt
 	}
 	defer rollback(ctx, tx, "create device login", &retErr)()
 	q := controlstatedb.New(tx)
-	if err := q.LockDeviceLoginCapacity(ctx); err != nil {
-		return login, "", err
-	}
-	if err := q.DeleteExpiredDeviceLogins(ctx, timestamptz(now)); err != nil {
-		return login, "", err
-	}
-	inserted, err := q.InsertDeviceLogin(ctx, controlstatedb.InsertDeviceLoginParams{CredentialDigest: digest[:], UserCode: code, ExpiresAt: timestamptz(login.ExpiresAt), Payload: payload, StorageKeyID: d.storageKey.CurrentID()})
-	if err == nil && inserted != 1 {
-		err = errors.New("device login capacity reached")
-	}
+	_, err = q.InsertDeviceLogin(ctx, controlstatedb.InsertDeviceLoginParams{CredentialDigest: digest[:], UserCode: code, ExpiresAt: timestamptz(login.ExpiresAt), Payload: payload, StorageKeyID: d.storageKey.CurrentID()})
 	if err == nil {
 		err = tx.Commit(ctx)
 	}

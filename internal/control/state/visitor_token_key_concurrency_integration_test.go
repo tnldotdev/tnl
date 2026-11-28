@@ -69,12 +69,12 @@ func TestIntegrationVisitorSigningNoOpPreservesSnapshot(t *testing.T) {
 		t.Fatalf("no-op issuer/key retention changed tuple versions: %s -> %s", before, after)
 	}
 	longer := permission
-	longer.ExpiresAt = permission.ExpiresAt.Add(time.Minute)
-	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, longer, now); err != nil {
+	longer.ExpiresAt = permission.ExpiresAt.Add(time.Hour)
+	if _, err := signStateTestPermission(t.Context(), d, testVisitorIssuer, longer, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	var retained time.Time
-	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE id=$1`, row.ID).Scan(&retained); err != nil || !retained.Equal(longer.ExpiresAt) || versions() == before {
+	if err := d.pool.QueryRow(t.Context(), `SELECT retain_until FROM control.visitor_token_keys WHERE id=$1`, row.ID).Scan(&retained); err != nil || retained.Before(longer.ExpiresAt) || retained.After(longer.ExpiresAt.Add(time.Hour)) || versions() == before {
 		t.Fatal("necessary retention extension was not durable", retained, err)
 	}
 }
@@ -172,7 +172,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 				}
 				defer rollbackTestTransaction(t, gate)
 				if order == "issue-first" {
-					// issuance retains the issuer lock until its permission commits.
+					// issuance shares key authority until its permission commits.
 					original, err = d.issueVisitorToken(ctx, gate, testVisitorIssuer, scope, BrowserTokenSource{}, newAuthorizationClock(now))
 					if err != nil {
 						t.Fatal(err)
@@ -187,7 +187,7 @@ func TestIntegrationVisitorSigningRotationWait(t *testing.T) {
 				rotationPID := waitForPostgresBlock(t, ctx, d, int32(gate.Conn().PgConn().PID()), rotated)
 				var stale <-chan error
 				if order == "rotate-first" {
-					// rotation holds the issuer while waiting on the key. this reader
+					// rotation holds key authority while waiting on the key. this reader
 					// authorizes against the pre-rotation repeatable-read snapshot.
 					tx, err := d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 					if err != nil {

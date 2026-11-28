@@ -68,32 +68,36 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	if _, err := d.PrepareConnectorPeerPair(ctx, crossed, crossed.RequestedAt); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("another owner's request key replaced the first pair", err)
 	}
-	for index := range maxConnectorPeerPairOwners - 2 {
+	// independent owners must cross the former 64-owner ceiling without
+	// losing idempotency or the exact-owner replacement and replay fences.
+	for index := range 64 {
 		next := request
-		next.IdempotencyKey = fmt.Sprintf("bounded-owner-%d", index)
+		next.IdempotencyKey = fmt.Sprintf("independent-owner-%d", index)
 		sign(&next)
 		pair, err := d.PrepareConnectorPeerPair(ctx, next, now)
 		if err != nil {
-			t.Fatal("prepare bounded owner", err)
+			t.Fatal("prepare independent owner", err)
 		}
 		inserted = append(inserted, pair.ID)
 	}
 	full := request
 	full.IdempotencyKey = "over-owner-budget"
 	sign(&full)
-	if _, err := d.PrepareConnectorPeerPair(ctx, full, now); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("unbounded connector owner inventory", err)
+	additional, err := d.PrepareConnectorPeerPair(ctx, full, now)
+	if err != nil {
+		t.Fatal("owner inventory has a fixed ceiling", err)
 	}
+	inserted = append(inserted, additional.ID)
 	if retry, err := d.PrepareConnectorPeerPair(ctx, request, now); err != nil || retry.ID != first.ID {
 		t.Fatal("full inventory blocked an exact retry", err)
 	}
-	// expiry does not free a row while its signed creation can still be replayed.
+	// expiry must still reject a replay of the original signed creation.
 	now = now.Add(time.Second)
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs SET expires_at=created_at+interval '1 microsecond' WHERE id=$1`, second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.PrepareConnectorPeerPair(ctx, full, now); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("expiry discarded the retained owner budget", err)
+	if _, err := d.PrepareConnectorPeerPair(ctx, secondRequest, now); !errors.Is(err, ErrServiceConflict) {
+		t.Fatal("expiry discarded the retained replay fence", err)
 	}
 	replace := secondRequest
 	replace.Action = "replace"
@@ -111,14 +115,17 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	if _, err := d.PrepareConnectorPeerPair(ctx, secondRequest, replace.RequestedAt); !errors.Is(err, ErrServiceConflict) {
 		t.Fatal("replacement lost its original owner replay fence", err)
 	}
-	// a fully expired row awaiting cleanup no longer holds a slot. replacement
-	// must reacquire capacity rather than increase the live inventory beyond 64.
+	// replacement of an expired owner still requires that exact owner and
+	// replaces its delivery, even with more than 64 other owners.
 	now = now.Add(time.Second)
 	if _, err := d.pool.Exec(ctx, `UPDATE control.connector_peer_pairs
 		SET expires_at=last_authorized_at+interval '1 microsecond',last_request_at=$2,replay_fence_until=$2::timestamptz+interval '5 minutes' WHERE id=$1`,
 		replaced.ID, now.Add(-5*time.Minute-time.Microsecond)); err != nil {
 		t.Fatal(err)
 	}
+	full.IdempotencyKey = "another-independent-owner"
+	full.RequestedAt = now
+	sign(&full)
 	newOwner, err := d.PrepareConnectorPeerPair(ctx, full, now)
 	if err != nil {
 		t.Fatal("fully expired owner retained capacity", err)
@@ -127,11 +134,13 @@ func assertConnectorPairOwnerIsolation(t *testing.T, d *Database, ctx context.Co
 	replace.PreviousPairID, replace.PreviousGeneration = replaced.ID, replaced.DeliveryGeneration
 	replace.RequestedAt = now
 	sign(&replace)
-	if _, err := d.PrepareConnectorPeerPair(ctx, replace, replace.RequestedAt); !errors.Is(err, ErrServiceConflict) {
-		t.Fatal("expired replacement exceeded owner capacity", err)
+	replacement, err := d.PrepareConnectorPeerPair(ctx, replace, replace.RequestedAt)
+	if err != nil || replacement.ID == replaced.ID {
+		t.Fatal("expired replacement did not replace its exact owner", err)
 	}
+	inserted[0] = replacement.ID
 	var retained bool
-	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_peer_pairs WHERE id=$1)`, replaced.ID).Scan(&retained); err != nil || !retained {
-		t.Fatal("rejected replacement deleted its predecessor", err)
+	if err := d.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM control.connector_peer_pairs WHERE id=$1)`, replaced.ID).Scan(&retained); err != nil || retained {
+		t.Fatal("accepted replacement retained its predecessor", err)
 	}
 }

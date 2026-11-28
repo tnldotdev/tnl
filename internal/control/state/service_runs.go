@@ -145,7 +145,8 @@ func (d *Database) startServiceRunAttempt(ctx context.Context, service, id strin
 		placements, eligible, err := selectRelayServicePlacements(ctx, tx, clock.current(), run.PreferredRegions...)
 		if err != nil {
 			if serviceRunCapacityOnly(err) {
-				// reclaim only against the locked set that actually ran out.
+				// reclaim only against the observed set that ran out. cleanup
+				// independently locks and rechecks each expired assignment.
 				for _, relay := range eligible {
 					result.capacityRelays = append(result.capacityRelays, relay.relayServiceID)
 				}

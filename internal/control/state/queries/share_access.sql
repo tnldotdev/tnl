@@ -5,19 +5,6 @@ WHERE share.id=sqlc.arg(share_id) AND included.service_id=sqlc.arg(service_id)
     AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
     AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
 
--- name: CountActiveSharesForService :one
-SELECT count(*)::bigint FROM control.shares share
-JOIN control.share_services included ON included.share_id=share.id
-WHERE included.service_id=sqlc.arg(service_id) AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
-    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
-
--- name: CountActiveShareCookiesForService :one
-SELECT count(*)::bigint FROM control.share_cookies cookie
-JOIN control.shares share ON share.id=cookie.share_id
-WHERE cookie.service_id=sqlc.arg(service_id) AND cookie.expires_at>sqlc.arg(now)
-    AND share.revoked_at IS NULL AND share.expires_at>sqlc.arg(now)
-    AND (share.scope<>'guest' OR control.guest_share_live(share.guest_id,sqlc.arg(now)));
-
 -- name: ListReadyShareServices :many
 -- aggregate replica runs before building one redirect per service hostname.
 SELECT service.id AS service_id,service.certificate_hostname,

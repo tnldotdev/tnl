@@ -93,7 +93,7 @@ func (d *Database) seedDefaultTeamMember(ctx context.Context, seeds HumanAuthent
 	}
 	defer rollback(ctx, tx, "seed default team", &retErr)()
 	q := controlstatedb.New(tx)
-	if err := q.LockIdentityBootstrap(ctx); err != nil {
+	if err := q.LockOIDCIdentity(ctx, controlstatedb.LockOIDCIdentityParams{Issuer: seeds.Issuer, Subject: subject}); err != nil {
 		return err
 	}
 	key, _ := json.Marshal([]string{"default-team", seeds.Issuer, subject, seeds.DefaultTeam})

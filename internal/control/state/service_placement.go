@@ -62,22 +62,26 @@ func selectRelayServicePlacements(ctx context.Context, tx pgx.Tx, now time.Time,
 // rank without locking unrelated relays. read the current slot counts again
 // after locking the winners. all new reservations on these relays wait for
 // those locks; concurrent releases can only add capacity. if the winners lost
-// capacity, release those locks before acquiring the full set in order.
+// capacity, release those locks and rank a fresh snapshot. a capacity miss
+// returns observed candidates for bounded reclamation without locking them all.
 func lockRankedRelayPlacements(ctx context.Context, tx pgx.Tx, now time.Time, preferences []string, choose func([]relayServicePlacement) []relayServicePlacement) ([]relayServicePlacement, error) {
 	clock := newAuthorizationClock(now)
 	q := controlstatedb.New(tx)
-	rows, err := q.ReadRelayPlacementCandidates(ctx, timestamptz(clock.current()))
-	if err != nil {
-		return nil, err
-	}
-	hints := make([]relayServicePlacement, len(rows))
-	for i, row := range rows {
-		hints[i] = relayServicePlacement{region: region.ID(row.Region), relayServiceID: row.RelayServiceID, capacity: row.Capacity, assignments: row.Assignments}
-	}
-	sortRelayPlacements(hints)
-	rankRelayPlacements(hints, preferences)
-	selected := choose(hints)
-	if len(selected) > 0 {
+	for {
+		rows, err := q.ReadRelayPlacementCandidates(ctx, timestamptz(clock.current()))
+		if err != nil {
+			return nil, err
+		}
+		hints := make([]relayServicePlacement, len(rows))
+		for i, row := range rows {
+			hints[i] = relayServicePlacement{region: region.ID(row.Region), relayServiceID: row.RelayServiceID, capacity: row.Capacity, assignments: row.Assignments}
+		}
+		sortRelayPlacements(hints)
+		rankRelayPlacements(hints, preferences)
+		selected := choose(hints)
+		if len(selected) == 0 {
+			return hints, nil
+		}
 		ids := make([]string, len(selected))
 		for i, r := range selected {
 			ids[i] = r.relayServiceID
@@ -97,9 +101,6 @@ func lockRankedRelayPlacements(ctx context.Context, tx pgx.Tx, now time.Time, pr
 			return nil, err
 		}
 	}
-	all, _, err := lockedRelayPlacements(ctx, q, clock.current(), nil)
-	rankRelayPlacements(all, preferences)
-	return all, err
 }
 
 // service guards precede relay lease locks, matching registration and renewal.

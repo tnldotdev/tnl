@@ -1,8 +1,12 @@
--- name: LockIdentityBootstrap :exec
-SELECT pg_advisory_xact_lock(837174137711267953);
+-- identity provisioning and signed actions coordinate only the exact issuer
+-- subject, including its first insertion when there is no row to lock yet.
+-- name: LockOIDCIdentity :exec
+SELECT pg_advisory_xact_lock(hashtextextended('tnl:oidc-identity:' ||
+    jsonb_build_array(sqlc.arg(issuer)::text,sqlc.arg(subject)::text)::text,0));
 
--- name: ObserveIdentityBootstrap :exec
-SELECT pg_advisory_xact_lock_shared(837174137711267953);
+-- name: ObserveOIDCIdentity :exec
+SELECT pg_advisory_xact_lock_shared(hashtextextended('tnl:oidc-identity:' ||
+    jsonb_build_array(sqlc.arg(issuer)::text,sqlc.arg(subject)::text)::text,0));
 
 -- name: ResolveLoginTeam :one
 SELECT id FROM control.teams WHERE (display_name=sqlc.arg(selection) OR id=sqlc.arg(selection)) AND deleted_at IS NULL;
@@ -54,10 +58,6 @@ WHERE id = sqlc.arg(id)
   AND disabled_at IS NULL
 RETURNING *;
 
--- name: DeleteExpiredOIDCAssertionExchanges :exec
-DELETE FROM control.oidc_assertion_exchanges
-WHERE expires_at <= sqlc.arg(now);
-
 -- name: ConsumeOIDCAssertion :execrows
 INSERT INTO control.oidc_assertion_exchanges (
     assertion_digest,
@@ -101,7 +101,7 @@ INSERT INTO control.domains (
     sqlc.arg(created_at),
     sqlc.arg(created_at),
     sqlc.arg(created_at)
-);
+) ON CONFLICT DO NOTHING;
 
 -- name: CreatePersonalTeam :exec
 INSERT INTO control.teams (

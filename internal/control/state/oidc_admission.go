@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,16 +34,18 @@ func (d *Database) ConfigureOIDCAdmissions(ctx context.Context, issuer string, r
 	}
 	defer rollback(ctx, tx, "configure OIDC admissions", &retErr)()
 	q := controlstatedb.New(tx)
-	if err := q.LockIdentityBootstrap(ctx); err != nil {
-		return err
-	}
 	configured := map[string]configuredAdmission{}
+	rules = slices.Clone(rules)
+	slices.SortFunc(rules, func(a, b oidc.AdmissionRule) int { return strings.Compare(a.Team, b.Team) })
 	for _, rule := range rules {
 		if !naming.ValidAuthorityLabel(rule.Team) {
 			return ErrAuthorityInvalid
 		}
 		team, err := q.FindSeedTeam(ctx, rule.Team)
 		if err != nil {
+			return err
+		}
+		if _, err := q.LockLocalTeamForMutation(ctx, team.ID); err != nil {
 			return err
 		}
 		key, _ := json.Marshal([]string{"oidc-admission", issuer, team.ID, rule.SourceID})

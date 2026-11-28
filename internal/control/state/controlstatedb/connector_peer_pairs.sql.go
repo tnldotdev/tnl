@@ -148,27 +148,6 @@ func (q *Queries) ConfirmConnectorPeerPendingPrepared(ctx context.Context, arg C
 	return result.RowsAffected(), nil
 }
 
-const countConnectorPeerPairOwners = `-- name: CountConnectorPeerPairOwners :one
-SELECT count(*) FROM (
-    SELECT id FROM control.connector_peer_pairs WHERE service_run_id=$1
-        AND (expires_at>$2 OR replay_fence_until>$2)
-    LIMIT $3
-) AS retained
-`
-
-type CountConnectorPeerPairOwnersParams struct {
-	ServiceRunID string
-	Now          pgtype.Timestamptz
-	OwnerLimit   int32
-}
-
-func (q *Queries) CountConnectorPeerPairOwners(ctx context.Context, arg CountConnectorPeerPairOwnersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countConnectorPeerPairOwners, arg.ServiceRunID, arg.Now, arg.OwnerLimit)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deleteConnectorPeerPairLegClaims = `-- name: DeleteConnectorPeerPairLegClaims :execrows
 DELETE FROM control.connector_peer_pair_leg_claims WHERE pair_id=$1
 `
